@@ -33,6 +33,10 @@ func run() {
     let c = Tunnel(name: "Proxy do escritório", host: "vpn.exemplo.com", user: "ana", kind: .dynamic, listenPort: 1080, tag: .teal)
     let d = Tunnel(name: "Postgres staging", host: "staging.exemplo.com", user: "app", listenPort: 5434, targetPort: 5432, tag: .green)
     store.tunnels = [a, b, c, d]
+    let web = Server(name: "Web produção", host: "web.exemplo.com", user: "deploy", credentialID: cred.id, tag: .purple,
+                     extraOptions: ["ProxyJump=bastion"])
+    let lab = Server(name: "", host: "lab.local", port: 2222, user: "ana", tag: .orange)
+    store.servers = [web, lab]
     store.session(a.id)?.setSnapshotState(.connected(since: Date().addingTimeInterval(-754)), logs: [
         (.info, "Conectando a deploy@db.exemplo.com…"), (.info, "Conexão TCP estabelecida."),
         (.info, "Servidor aceitou a chave."), (.info, "Autenticado."), (.success, "Túnel ativo."),
@@ -57,12 +61,12 @@ func run() {
                to: out.appendingPathComponent("credential-locked-\(suffix).png"))
         render(TunnelDetailView(tunnelID: d.id).environment(store), size: CGSize(width: 760, height: 420), dark: dark,
                to: out.appendingPathComponent("unlocking-\(suffix).png"))
-        let ask = TunnelSession.InputRequest(tunnel: b, kind: .password, prompt: "(ops@cache.interno) Password:",
+        let ask = TunnelSession.InputRequest(subject: PromptSubject(b), kind: .password, prompt: "(ops@cache.interno) Password:",
                                              retry: false, storedRejected: false,
                                              saveTarget: "como a credencial “Senha de ops@cache.interno”", keyName: nil)
         render(PromptView(request: ask) { _ in }.background(.background), size: CGSize(width: 440, height: 430), dark: dark,
                to: out.appendingPathComponent("prompt-\(suffix).png"))
-        let retry = TunnelSession.InputRequest(tunnel: a, kind: .passphrase(keyPath: "/Users/ana/.ssh/id_ed25519"),
+        let retry = TunnelSession.InputRequest(subject: PromptSubject(a), kind: .passphrase(keyPath: "/Users/ana/.ssh/id_ed25519"),
                                                prompt: "Enter passphrase for key '/Users/ana/.ssh/id_ed25519':",
                                                retry: true, storedRejected: false,
                                                saveTarget: "na credencial “Chave de produção”", keyName: "Chave de produção")
@@ -70,10 +74,16 @@ func run() {
                to: out.appendingPathComponent("prompt-retry-\(suffix).png"))
         render(EmptyStateView().environment(store), size: CGSize(width: 760, height: 600), dark: dark,
                to: out.appendingPathComponent("empty-\(suffix).png"))
-        render(SidebarView().environment(store).background(.background), size: CGSize(width: 300, height: 420), dark: dark,
+        render(SidebarView().environment(store).background(.background), size: CGSize(width: 300, height: 600), dark: dark,
                to: out.appendingPathComponent("sidebar-\(suffix).png"))
-        render(MenuBarView().environment(store).background(.background), size: CGSize(width: 330, height: 360), dark: dark,
+        render(ServersEmptyRow().environment(store).padding(.horizontal, 12).background(.background),
+               size: CGSize(width: 290, height: 110), dark: dark, to: out.appendingPathComponent("servers-empty-\(suffix).png"))
+        render(MenuBarView().environment(store).background(.background), size: CGSize(width: 330, height: 480), dark: dark,
                to: out.appendingPathComponent("menubar-\(suffix).png"))
+        render(ServerDetailView(serverID: web.id).environment(store), size: CGSize(width: 760, height: 620), dark: dark,
+               to: out.appendingPathComponent("server-\(suffix).png"))
+        render(ServerEditor(request: ServerEditorRequest(server: lab, isNew: true)).environment(store),
+               size: CGSize(width: 560, height: 600), dark: dark, to: out.appendingPathComponent("server-editor-\(suffix).png"))
         render(TunnelEditor(request: EditorRequest(tunnel: a, isNew: false)).environment(store),
                size: CGSize(width: 600, height: 720), dark: dark, to: out.appendingPathComponent("editor-\(suffix).png"))
     }

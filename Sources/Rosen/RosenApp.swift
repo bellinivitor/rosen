@@ -120,27 +120,38 @@ struct RosenCommands: Commands {
                 .keyboardShortcut("n")
             Button("Novo túnel a partir do clipboard") { openMain(); store.newTunnelFromClipboard() }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
+            Divider()
+            Button("Novo servidor") { openMain(); store.newServer() }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+            Button("Importar servidores do ~/.ssh/config…") { openMain(); store.showingSSHConfigImport = true }
         }
 
-        CommandMenu("Túnel") {
+        CommandMenu("Conexão") {
             let selected = store.selection.flatMap(store.tunnel)
+            let server = store.selection.flatMap(store.server)
+            let hasSelection = selected != nil || server != nil
             let isOn = selected.flatMap { store.session($0.id)?.isOn } ?? false
-            Button(isOn ? "Desconectar" : "Conectar") { if let id = selected?.id { store.toggle(id) } }
+            Button(server != nil ? "Abrir no \(TerminalApp.preferred.title)" : isOn ? "Desconectar" : "Conectar") {
+                if let id = selected?.id { store.toggle(id) } else if let id = server?.id { store.openServer(id) }
+            }
                 .keyboardShortcut("r")
-                .disabled(selected == nil)
-            Button("Editar…") { if let id = selected?.id { store.edit(id) } }
+                .disabled(!hasSelection)
+            Button("Editar…") { if let id = selected?.id { store.edit(id) } else if let id = server?.id { store.editServer(id) } }
                 .keyboardShortcut("e")
-                .disabled(selected == nil)
-            Button("Duplicar") { if let id = selected?.id { store.duplicate(id) } }
+                .disabled(!hasSelection)
+            Button("Duplicar") { if let id = selected?.id { store.duplicate(id) } else if let id = server?.id { store.duplicateServer(id) } }
                 .keyboardShortcut("d")
-                .disabled(selected == nil)
+                .disabled(!hasSelection)
             Divider()
             Button("Copiar endereço local") { if let id = selected?.id { store.copyAddress(id) } }
                 .keyboardShortcut("c", modifiers: [.command, .option])
                 .disabled(selected == nil)
-            Button("Copiar comando ssh") { if let id = selected?.id { store.copyCommand(id) } }
+            Button("Copiar comando ssh") { if let id = selected?.id { store.copyCommand(id) } else if let id = server?.id { store.copyServerCommand(id) } }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
-                .disabled(selected == nil)
+                .disabled(!hasSelection)
+            if let id = server?.id {
+                Button("Criar túnel a partir deste servidor…") { store.newTunnel(from: id) }
+            }
             Divider()
             Button("Conectar todos") { store.connectAll() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
@@ -155,8 +166,8 @@ struct RosenCommands: Commands {
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 .disabled(!Unlocker.shared.isUnlocked)
             Divider()
-            Button("Excluir…") { if let id = selected?.id { store.requestDelete(id) } }
-                .disabled(selected == nil)
+            Button("Excluir…") { if let id = selected?.id { store.requestDelete(id) } else if let id = server?.id { store.requestDeleteServer(id) } }
+                .disabled(!hasSelection)
         }
     }
 
@@ -173,6 +184,7 @@ struct SettingsView: View {
     @AppStorage(DockIcon.keepKey) private var keepDockIcon = false
     @AppStorage("notifyDrops") private var notifyDrops = true
     @AppStorage(Unlocker.graceKey) private var graceMinutes = 15
+    @AppStorage(TerminalApp.preferenceKey) private var terminalChoice = ""
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
 
@@ -197,6 +209,28 @@ struct SettingsView: View {
                 Toggle("Avisar quando um túnel cair", isOn: $notifyDrops)
             } footer: {
                 Text("Ao fechar a janela, o Rosen fica só na barra de menus e os túneis continuam ligados. ⌘Q sai de vez.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Abrir servidores no", selection: Binding(
+                    get: { TerminalApp.preferred },
+                    set: { terminalChoice = $0.rawValue }
+                )) {
+                    ForEach(TerminalApp.allCases) { app in
+                        Text(app.isInstalled ? app.title : "\(app.title) (não instalado)")
+                            .tag(app)
+                            .disabled(!app.isInstalled)
+                    }
+                }
+                if !terminalChoice.isEmpty, let chosen = TerminalApp(rawValue: terminalChoice), !chosen.isInstalled {
+                    Text("O \(chosen.title) não foi encontrado. Usando o \(TerminalApp.preferred.title).")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Terminal")
+            } footer: {
+                Text("Cada servidor abre numa aba nova com o ssh já rodando. O Rosen entrega senhas salvas pelo askpass, sem digitar.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

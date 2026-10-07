@@ -30,7 +30,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            if store.tunnels.isEmpty {
+            if store.tunnels.isEmpty && store.servers.isEmpty {
                 VStack(spacing: 10) {
                     RosenMarkView(size: 28)
                         .foregroundStyle(.secondary)
@@ -47,6 +47,20 @@ struct MenuBarView: View {
                             MenuTunnelRow(tunnel: tunnel) {
                                 store.selection = tunnel.id
                                 openMain()
+                            }
+                        }
+                        if !store.servers.isEmpty {
+                            Text("Servidores")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8)
+                                .padding(.top, store.tunnels.isEmpty ? 2 : 8)
+                            ForEach(store.servers) { server in
+                                MenuServerRow(server: server) {
+                                    store.selection = server.id
+                                    openMain()
+                                }
                             }
                         }
                     }
@@ -146,6 +160,38 @@ struct MenuTunnelRow: View {
         .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
         .onTapGesture(count: 2) { onOpen() }
         .animation(.snappy, value: status)
+    }
+}
+
+struct MenuServerRow: View {
+    @Environment(AppStore.self) private var store
+    let server: Server
+    let onOpen: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ServerIcon(server: server, size: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(server.displayName).font(.callout.weight(.medium)).lineLimit(1)
+                Text(server.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            if store.openingServers.contains(server.id) {
+                ProgressView().controlSize(.mini)
+            } else {
+                Button { store.openServer(server.id) } label: { Image(systemName: "arrow.up.forward.app") }
+                    .buttonStyle(.borderless)
+                    .help("Abrir no \(TerminalApp.preferred.title)")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(hovering ? Color.primary.opacity(0.07) : .clear))
+        .contentShape(Rectangle())
+        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
+        .onTapGesture { store.openServer(server.id) }
+        .contextMenu { Button("Mostrar no Rosen") { onOpen() } }
     }
 }
 

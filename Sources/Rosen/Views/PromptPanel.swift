@@ -81,6 +81,23 @@ final class PromptPresenter: NSObject, NSWindowDelegate {
     }
 }
 
+/// Quem pediu: um túnel ou um servidor.
+struct PromptSubject {
+    let name: String
+    let destination: String
+    let user: String
+    let tag: TagColor
+    let symbol: String
+
+    init(_ t: Tunnel) {
+        name = t.displayName; destination = t.destination; user = t.user; tag = t.tag; symbol = t.symbol
+    }
+
+    init(_ s: Server) {
+        name = s.displayName; destination = s.destination; user = s.user; tag = s.tag; symbol = Server.symbol
+    }
+}
+
 struct PromptView: View {
     let request: TunnelSession.InputRequest
     let onFinish: (TunnelSession.InputResponse) -> Void
@@ -92,7 +109,7 @@ struct PromptView: View {
     @State private var shake = 0
     @FocusState private var focused: Bool
 
-    private var tunnel: Tunnel { request.tunnel }
+    private var subject: PromptSubject { request.subject }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -120,7 +137,7 @@ struct PromptView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 14) {
             ZStack(alignment: .bottomTrailing) {
-                TunnelIcon(tunnel: tunnel, size: 44)
+                TagIcon(color: subject.tag.color, symbol: subject.symbol, size: 44)
                 Image(systemName: headerSymbol)
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.white)
@@ -132,7 +149,7 @@ struct PromptView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                Text("\(tunnel.displayName) (\(tunnel.destination))")
+                Text("\(subject.name) (\(subject.destination))")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -143,7 +160,7 @@ struct PromptView: View {
         .padding(.top, 30)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RosenBackdrop(color: tunnel.tag.color, radius: 0))
+        .background(RosenBackdrop(color: subject.tag.color, radius: 0))
     }
 
     private var field: some View {
@@ -265,7 +282,7 @@ struct PromptView: View {
 
     private var placeholder: String {
         switch request.kind {
-        case .password: return "Senha de \(tunnel.user.isEmpty ? "usuário" : tunnel.user)"
+        case .password: return "Senha de \(subject.user.isEmpty ? "usuário" : subject.user)"
         case .passphrase: return "Passphrase"
         case .other: return "Resposta (ex.: código de verificação)"
         }

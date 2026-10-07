@@ -5,6 +5,12 @@ import Network
 import Observation
 import UserNotifications
 
+struct ServerEditorRequest: Identifiable {
+    let id = UUID()
+    var server: Server
+    var isNew: Bool
+}
+
 struct EditorRequest: Identifiable {
     let id = UUID()
     var tunnel: Tunnel
@@ -21,13 +27,21 @@ final class AppStore {
 
     var tunnels: [Tunnel] = [] { didSet { syncSessions(); scheduleSave() } }
     var credentials: [Credential] = [] { didSet { scheduleSave() } }
+    var servers: [Server] = [] { didSet { scheduleSave() } }
     private(set) var sessions: [UUID: TunnelSession] = [:]
+    /// Sessões de servidor ainda escutando o askpass (por id da conexão).
+    @ObservationIgnored private var connections: [UUID: ServerConnection] = [:]
+    /// Servidores com o terminal sendo aberto agora (Touch ID, preparação).
+    private(set) var openingServers: Set<UUID> = []
     private(set) var loadState: LoadState = .loading
 
     // Estado de UI compartilhado entre janela, menus e barra de menus.
     var selection: UUID?
     var editorRequest: EditorRequest?
+    var serverEditorRequest: ServerEditorRequest?
     var pendingDeletion: Tunnel?
+    var pendingServerDeletion: Server?
+    var showingSSHConfigImport = false
     var toast: String?
 
     @ObservationIgnored private let vault = Vault(url: Vault.defaultURL, keyProvider: KeychainKeyProvider())
@@ -62,8 +76,9 @@ final class AppStore {
             let payload = try vault.load() ?? VaultPayload()
             credentials = payload.credentials
             tunnels = payload.tunnels
+            servers = payload.servers
             loadState = .ready
-            if selection == nil { selection = tunnels.first?.id }
+            if selection == nil { selection = tunnels.first?.id ?? servers.first?.id }
         } catch {
             loadState = .failed(error.localizedDescription)
         }
@@ -99,9 +114,10 @@ final class AppStore {
         saveTask?.cancel()
         if loadState == .ready { try? vault.save(payload) }
         sessions.values.forEach { $0.shutdown() }
+        connections.values.forEach { $0.finish() }
     }
 
-    private var payload: VaultPayload { VaultPayload(tunnels: tunnels, credentials: credentials) }
+    private var payload: VaultPayload { VaultPayload(tunnels: tunnels, credentials: credentials, servers: servers) }
 
     private func scheduleSave() {
         guard loadState == .ready else { return }
@@ -208,6 +224,7 @@ final class AppStore {
     var activeCount: Int { sessions.values.filter(\.isOn).count }
 
     func usage(of credentialID: UUID) -> [Tunnel] { tunnels.filter { $0.credentialID == credentialID } }
+    func serverUsage(of credentialID: UUID) -> [Server] { servers.filter { $0.credentialID == credentialID } }
 
     func conflict(for draft: Tunnel) -> Tunnel? { tunnels.first { $0.conflicts(with: draft) } }
 
@@ -323,6 +340,7 @@ final class AppStore {
 
     func deleteCredential(_ id: UUID) {
         for i in tunnels.indices where tunnels[i].credentialID == id { tunnels[i].credentialID = nil }
+        for i in servers.indices where servers[i].credentialID == id { servers[i].credentialID = nil }
         credentials.removeAll { $0.id == id }
     }
 
@@ -344,14 +362,18 @@ final class AppStore {
 
     /// Descrição de onde o segredo seria salvo, ou `nil` se não houver lugar sensato.
     func saveTarget(for tunnel: Tunnel, kind: AskpassPrompt) -> String? {
-        let current = tunnel.credentialID.flatMap(credential)
+        saveTarget(credentialID: tunnel.credentialID, destination: tunnel.destination, kind: kind)
+    }
+
+    private func saveTarget(credentialID: UUID?, destination: String, kind: AskpassPrompt) -> String? {
+        let current = credentialID.flatMap(credential)
         switch kind {
         case .other:
             return nil
         case .password:
             if let c = current, c.kind == .password { return "na credencial “\(c.displayName)”" }
             if let c = current, c.kind == .keyFile || c.kind == .keyContent { return nil } // não troca a chave por senha
-            return "como a credencial “Senha de \(tunnel.destination)”"
+            return "como a credencial “Senha de \(destination)”"
         case .passphrase(let keyPath):
             if let c = current, c.kind == .keyFile || c.kind == .keyContent { return "na credencial “\(c.displayName)”" }
             guard let keyPath else { return nil }
@@ -361,33 +383,168 @@ final class AppStore {
 
     /// Guarda o segredo que o usuário digitou (chamado só depois que o servidor aceitou).
     func rememberSecret(_ secret: String, kind: AskpassPrompt, for tunnelID: UUID, protect: Bool) {
-        guard let tunnel = tunnel(tunnelID) else { return }
+        guard let tunnel = tunnel(tunnelID),
+              let id = storeSecret(secret, kind: kind, credentialID: tunnel.credentialID, destination: tunnel.destination, protect: protect)
+        else { return }
+        // Liga a credencial ao túnel sem reiniciar a conexão que acabou de autenticar.
+        if let i = tunnels.firstIndex(where: { $0.id == tunnelID }), tunnels[i].credentialID != id {
+            tunnels[i].credentialID = id
+        }
+    }
+
+    func rememberSecret(_ secret: String, kind: AskpassPrompt, forServer serverID: UUID, protect: Bool) {
+        guard let server = server(serverID),
+              let id = storeSecret(secret, kind: kind, credentialID: server.credentialID, destination: server.destination, protect: protect)
+        else { return }
+        if let i = servers.firstIndex(where: { $0.id == serverID }), servers[i].credentialID != id {
+            servers[i].credentialID = id
+        }
+    }
+
+    /// Grava o segredo na credencial certa (existente ou nova) e devolve o id dela.
+    private func storeSecret(_ secret: String, kind: AskpassPrompt, credentialID currentID: UUID?, destination: String, protect: Bool) -> UUID? {
         var target: Credential
-        if let c = tunnel.credentialID.flatMap(credential), saveTarget(for: tunnel, kind: kind)?.hasPrefix("na credencial") == true {
+        if let c = currentID.flatMap(credential),
+           saveTarget(credentialID: currentID, destination: destination, kind: kind)?.hasPrefix("na credencial") == true {
             target = c
         } else {
             switch kind {
             case .password:
-                target = Credential(name: "Senha de \(tunnel.destination)", kind: .password)
+                target = Credential(name: "Senha de \(destination)", kind: .password)
             case .passphrase(let keyPath?):
                 let id = credentialID(forIdentityFile: keyPath)
                 target = credential(id) ?? Credential(kind: .keyFile, keyPath: Paths.abbreviate(keyPath))
             default:
-                return
+                return nil
             }
         }
         switch kind {
         case .password: target.password = secret
         case .passphrase: target.passphrase = secret
-        case .other: return
+        case .other: return nil
         }
         target.requireUserPresence = protect
         upsert(target)
-        // Liga a credencial ao túnel sem reiniciar a conexão que acabou de autenticar.
-        if let i = tunnels.firstIndex(where: { $0.id == tunnelID }), tunnels[i].credentialID != target.id {
-            tunnels[i].credentialID = target.id
-        }
         showToast(protect ? "Salvo no cofre, protegido por \(Unlocker.methodName)" : "Salvo no cofre")
+        return target.id
+    }
+
+    // MARK: - Servidores
+
+    func server(_ id: UUID) -> Server? { servers.first { $0.id == id } }
+
+    func newServer(prefill: String = "") {
+        var s = Server(tag: TagColor.allCases[servers.count % (TagColor.allCases.count - 1)])
+        if let parsed = SSHCommandParser.parse(prefill) {
+            s = parsed.server
+            s.tag = TagColor.allCases[servers.count % (TagColor.allCases.count - 1)]
+            if let identity = parsed.identityFile { s.credentialID = credentialID(forIdentityFile: identity) }
+        }
+        serverEditorRequest = ServerEditorRequest(server: s, isNew: true)
+    }
+
+    func editServer(_ id: UUID) {
+        guard let s = server(id) else { return }
+        serverEditorRequest = ServerEditorRequest(server: s, isNew: false)
+    }
+
+    func save(_ server: Server) {
+        if let i = servers.firstIndex(where: { $0.id == server.id }) {
+            servers[i] = server
+        } else {
+            servers.append(server)
+        }
+        selection = server.id
+    }
+
+    func duplicateServer(_ id: UUID) {
+        guard var copy = server(id) else { return }
+        copy.id = UUID()
+        copy.name = copy.displayName + " (cópia)"
+        copy.createdAt = Date()
+        if let i = servers.firstIndex(where: { $0.id == id }) { servers.insert(copy, at: i + 1) } else { servers.append(copy) }
+        selection = copy.id
+    }
+
+    func requestDeleteServer(_ id: UUID) { pendingServerDeletion = server(id) }
+
+    func deleteServer(_ id: UUID) {
+        guard let i = servers.firstIndex(where: { $0.id == id }) else { return }
+        servers.remove(at: i)
+        if selection == id { selection = servers.indices.contains(i) ? servers[i].id : servers.last?.id ?? tunnels.first?.id }
+    }
+
+    func moveServers(from source: IndexSet, to destination: Int) {
+        servers.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func copyServerCommand(_ id: UUID) {
+        guard let s = server(id) else { return }
+        copy(SSHCommand.displayString(for: s, credential: s.credentialID.flatMap(credential)), message: "Comando copiado")
+    }
+
+    /// Importa hosts do ~/.ssh/config, sem duplicar os que já existem. Devolve quantos entraram.
+    @discardableResult
+    func importHosts(_ hosts: [SSHConfigHost]) -> Int {
+        let existing = Set(servers.map { $0.host.lowercased() })
+        var added: [Server] = []
+        for (n, host) in hosts.enumerated() where !existing.contains(host.alias.lowercased()) {
+            var s = host.server
+            s.tag = TagColor.allCases[(servers.count + n) % (TagColor.allCases.count - 1)]
+            added.append(s)
+        }
+        servers += added
+        if let first = added.first { selection = first.id }
+        return added.count
+    }
+
+    func isImported(_ host: SSHConfigHost) -> Bool {
+        servers.contains { $0.host.caseInsensitiveCompare(host.alias) == .orderedSame }
+    }
+
+    /// Abre um túnel novo já apontando para o servidor.
+    func newTunnel(from serverID: UUID) {
+        guard let s = server(serverID) else { return }
+        var t = s.makeTunnel()
+        t.tag = s.tag
+        t.listenPort = suggestedListenPort(for: t.targetPort, excluding: nil)
+        editorRequest = EditorRequest(tunnel: t, isNew: true)
+    }
+
+    /// Abre uma sessão SSH interativa no terminal escolhido nos Ajustes.
+    func openServer(_ id: UUID) {
+        guard server(id) != nil, !openingServers.contains(id) else { return }
+        let terminal = TerminalApp.preferred
+        let c = ServerConnection(serverID: id)
+        c.askpassPath = askpassPath
+        c.resolve = { [weak self] in
+            guard let self, let s = self.server(id) else { return nil }
+            return (s, s.credentialID.flatMap(self.credential))
+        }
+        c.authorize = { server, credential in
+            await Unlocker.shared.authorize(reason: "usar “\(credential.displayName)” para abrir “\(server.displayName)”")
+        }
+        c.requestInput = { request, done in PromptPresenter.shared.present(request, completion: done) }
+        c.dismissInput = { id in PromptPresenter.shared.dismiss(id) }
+        c.saveTarget = { [weak self] server, kind in
+            self?.saveTarget(credentialID: server.credentialID, destination: server.destination, kind: kind)
+        }
+        c.rememberSecret = { [weak self] server, kind, secret, protect in
+            self?.rememberSecret(secret, kind: kind, forServer: server.id, protect: protect)
+        }
+        c.onFinish = { [weak self] c in self?.connections.removeValue(forKey: c.id) }
+        connections[c.id] = c
+        openingServers.insert(id)
+        Task {
+            defer { openingServers.remove(id) }
+            do {
+                try await c.start(in: terminal)
+            } catch ServerConnection.LaunchError.unlockCancelled {
+                showToast("Desbloqueio cancelado")
+            } catch {
+                showToast(error.localizedDescription)
+            }
+        }
     }
 
     // MARK: - Toast

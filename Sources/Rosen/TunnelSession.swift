@@ -39,7 +39,7 @@ final class TunnelSession {
     /// Pedido do ssh que precisa de resposta do usuário.
     struct InputRequest: Identifiable {
         let id = UUID()
-        let tunnel: Tunnel
+        let subject: PromptSubject
         let kind: AskpassPrompt
         /// Texto original do ssh, ex.: "(ana@host) Password:".
         let prompt: String
@@ -322,7 +322,7 @@ final class TunnelSession {
 
         // 2) Pergunta ao usuário.
         let request = InputRequest(
-            tunnel: tunnel, kind: kind, prompt: prompt,
+            subject: PromptSubject(tunnel), kind: kind, prompt: prompt,
             retry: promptCount > 1,
             storedRejected: usedStoredSecret && promptCount == 2,
             saveTarget: kind == .other ? nil : saveTarget(tunnel, kind),
@@ -469,14 +469,14 @@ final class TunnelSession {
         latencyAvailable = true
     }
 
-    private nonisolated static func resolveTarget(_ tunnel: Tunnel) async -> Latency.Target? {
+    nonisolated static func resolveTarget(_ tunnel: Tunnel) async -> Latency.Target? {
         await Task.detached(priority: .utility) {
             let out = run("/usr/bin/ssh", Latency.sshConfigArguments(for: tunnel))
             return out.flatMap(Latency.target(fromSSHConfig:))
         }.value
     }
 
-    private nonisolated static func ping(_ host: String) async -> Double? {
+    nonisolated static func ping(_ host: String) async -> Double? {
         await Task.detached(priority: .utility) {
             run("/sbin/ping", Latency.pingArguments(host: host)).flatMap(Latency.milliseconds(fromPing:))
         }.value

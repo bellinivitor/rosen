@@ -12,7 +12,7 @@ struct CredentialsView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 ForEach(store.credentials) { c in
-                    CredentialRow(credential: c, usage: store.usage(of: c.id).count)
+                    CredentialRow(credential: c, usage: store.usage(of: c.id).count + store.serverUsage(of: c.id).count)
                         .tag(c.id)
                         .contextMenu {
                             Button("Excluir…", role: .destructive) { pendingDeletion = c }
@@ -56,7 +56,7 @@ struct CredentialsView: View {
                 CredentialForm(credential: Binding(
                     get: { store.credential(id) ?? Credential() },
                     set: { store.upsert($0) }
-                ), usage: store.usage(of: id))
+                ), usage: store.usage(of: id), serverUsage: store.serverUsage(of: id))
                 .id(id)
                 .toolbar {
                     ToolbarItem {
@@ -85,9 +85,9 @@ struct CredentialsView: View {
                 pendingDeletion = nil
             }
         } message: {
-            let count = pendingDeletion.map { store.usage(of: $0.id).count } ?? 0
+            let count = pendingDeletion.map { store.usage(of: $0.id).count + store.serverUsage(of: $0.id).count } ?? 0
             Text(count > 0
-                 ? "\(count) túnel(is) usam esta credencial e passarão a usar o padrão do sistema."
+                 ? "\(count) túnel(is) ou servidor(es) usam esta credencial e passarão a usar o padrão do sistema."
                  : "Os dados secretos serão removidos do cofre.")
         }
     }
@@ -112,7 +112,7 @@ struct CredentialRow: View {
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentColor.gradient))
             VStack(alignment: .leading, spacing: 2) {
                 Text(credential.displayName).font(.body.weight(.medium)).lineLimit(1)
-                Text(usage == 0 ? "\(credential.kind.title), sem uso" : "\(credential.kind.title), em \(usage) túne\(usage == 1 ? "l" : "is")")
+                Text(usage == 0 ? "\(credential.kind.title), sem uso" : "\(credential.kind.title), em \(usage) \(usage == 1 ? "uso" : "usos")")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -134,6 +134,7 @@ struct CredentialRow: View {
 struct CredentialForm: View {
     @Binding var credential: Credential
     var usage: [Tunnel] = []
+    var serverUsage: [Server] = []
     @State private var discovered: [URL] = []
     /// Segredos visíveis nesta tela (só depois do Touch ID, se a credencial for protegida).
     @State private var revealed = false
@@ -173,7 +174,7 @@ struct CredentialForm: View {
                 }
             }
 
-            if !usage.isEmpty {
+            if !usage.isEmpty || !serverUsage.isEmpty {
                 Section("Usada por") {
                     ForEach(usage) { t in
                         HStack(spacing: 8) {
@@ -181,6 +182,14 @@ struct CredentialForm: View {
                             Text(t.displayName)
                             Spacer()
                             Text(t.summary).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        }
+                    }
+                    ForEach(serverUsage) { s in
+                        HStack(spacing: 8) {
+                            ServerIcon(server: s, size: 20)
+                            Text(s.displayName)
+                            Spacer()
+                            Text(s.summary).font(.caption.monospaced()).foregroundStyle(.secondary)
                         }
                     }
                 }

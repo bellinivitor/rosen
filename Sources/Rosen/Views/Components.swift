@@ -52,6 +52,10 @@ extension Credential {
     var protectionSymbol: String? { needsUnlock ? Unlocker.symbol : nil }
 }
 
+extension Server {
+    static let symbol = "terminal.fill"
+}
+
 extension CredentialKind {
     var symbol: String {
         switch self {
@@ -94,17 +98,32 @@ struct TunnelIcon: View {
     let tunnel: Tunnel
     var size: CGFloat = 30
 
+    var body: some View { TagIcon(color: tunnel.tag.color, symbol: tunnel.symbol, size: size) }
+}
+
+struct ServerIcon: View {
+    let server: Server
+    var size: CGFloat = 30
+
+    var body: some View { TagIcon(color: server.tag.color, symbol: Server.symbol, size: size) }
+}
+
+struct TagIcon: View {
+    let color: Color
+    let symbol: String
+    var size: CGFloat = 30
+
     var body: some View {
         RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-            .fill(tunnel.tag.color.gradient)
+            .fill(color.gradient)
             .overlay {
-                Image(systemName: tunnel.symbol)
+                Image(systemName: symbol)
                     .font(.system(size: size * 0.46, weight: .semibold))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
             }
             .frame(width: size, height: size)
-            .shadow(color: tunnel.tag.color.opacity(0.35), radius: size * 0.12, y: size * 0.05)
+            .shadow(color: color.opacity(0.35), radius: size * 0.12, y: size * 0.05)
     }
 }
 
@@ -285,32 +304,48 @@ struct LatencyBadge: View {
 
     var body: some View {
         if session.status.isConnected {
-            HStack(spacing: 6) {
-                if !session.latencyAvailable {
-                    Text("sem ping")
-                        .foregroundStyle(.tertiary)
-                        .help("O servidor não responde a ping, ou há um bastion no meio. O túnel funciona normalmente.")
-                } else if let ms = session.latency {
-                    let quality = Latency.quality(ms)
-                    if showsSparkline {
-                        Sparkline(samples: session.latencySamples, color: quality.color)
-                            .frame(width: 54, height: 16)
-                    }
-                    Circle().fill(quality.color).frame(width: 6, height: 6)
-                    Text("\(Int(ms.rounded())) ms")
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                        .animation(.snappy, value: Int(ms.rounded()))
-                } else {
-                    Text("medindo…").foregroundStyle(.tertiary)
-                }
-            }
-            .help(helpText)
+            LatencyReadout(samples: session.latencySamples, available: session.latencyAvailable,
+                           showsSparkline: showsSparkline,
+                           unavailableHelp: "O servidor não responde a ping, ou há um bastion no meio. O túnel funciona normalmente.")
         }
+    }
+}
+
+/// Valor da latência com bolinha de qualidade e, opcionalmente, o mini gráfico.
+struct LatencyReadout: View {
+    let samples: [Double?]
+    let available: Bool
+    var showsSparkline = false
+    var unavailableHelp = "O servidor não responde a ping, ou há um bastion no meio."
+
+    private var latency: Double? { Latency.smoothed(samples) }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if !available {
+                Text("sem ping")
+                    .foregroundStyle(.tertiary)
+                    .help(unavailableHelp)
+            } else if let ms = latency {
+                let quality = Latency.quality(ms)
+                if showsSparkline {
+                    Sparkline(samples: samples, color: quality.color)
+                        .frame(width: 54, height: 16)
+                }
+                Circle().fill(quality.color).frame(width: 6, height: 6)
+                Text("\(Int(ms.rounded())) ms")
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: Int(ms.rounded()))
+            } else {
+                Text("medindo…").foregroundStyle(.tertiary)
+            }
+        }
+        .help(helpText)
     }
 
     private var helpText: String {
-        guard let ms = session.latency else { return "Latência até o servidor (ping)" }
+        guard available, let ms = latency else { return available ? "Latência até o servidor (ping)" : unavailableHelp }
         return "Latência até o servidor: \(Int(ms.rounded())) ms (\(Latency.quality(ms).label)). Medida por ping a cada 5 s."
     }
 }

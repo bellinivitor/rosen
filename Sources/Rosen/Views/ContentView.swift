@@ -20,15 +20,42 @@ struct ContentView: View {
                     Label("Credenciais", systemImage: "key")
                 }
                 .help("Gerenciar credenciais (⇧⌘K)")
-                Button { store.newTunnel() } label: {
-                    Label("Novo túnel", systemImage: "plus")
+                Menu {
+                    Button("Novo túnel") { store.newTunnel() }
+                    Button("Novo servidor") { store.newServer() }
+                    Divider()
+                    Button("Importar do ~/.ssh/config…") { store.showingSSHConfigImport = true }
+                } label: {
+                    Label("Novo", systemImage: "plus")
+                } primaryAction: {
+                    store.newTunnel()
                 }
-                .help("Novo túnel (⌘N)")
+                .help("Novo túnel (⌘N) ou servidor (⌥⌘N)")
             }
         }
         .sheet(item: $store.editorRequest) { request in
             TunnelEditor(request: request)
                 .environment(store)
+        }
+        .sheet(item: $store.serverEditorRequest) { request in
+            ServerEditor(request: request)
+                .environment(store)
+        }
+        .sheet(isPresented: $store.showingSSHConfigImport) {
+            ImportSSHConfigView()
+                .environment(store)
+        }
+        .confirmationDialog(
+            "Excluir “\(store.pendingServerDeletion?.displayName ?? "")”?",
+            isPresented: Binding(get: { store.pendingServerDeletion != nil }, set: { if !$0 { store.pendingServerDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Excluir servidor", role: .destructive) {
+                if let s = store.pendingServerDeletion { withAnimation(.snappy) { store.deleteServer(s.id) } }
+                store.pendingServerDeletion = nil
+            }
+        } message: {
+            Text("Sessões abertas no terminal não são afetadas. As credenciais não são apagadas.")
         }
         .confirmationDialog(
             "Excluir “\(store.pendingDeletion?.displayName ?? "")”?",
@@ -63,13 +90,16 @@ struct ContentView: View {
             if let id = store.selection, store.tunnel(id) != nil {
                 TunnelDetailView(tunnelID: id)
                     .id(id)
-            } else if store.tunnels.isEmpty {
+            } else if let id = store.selection, store.server(id) != nil {
+                ServerDetailView(serverID: id)
+                    .id(id)
+            } else if store.tunnels.isEmpty && store.servers.isEmpty {
                 EmptyStateView()
             } else {
                 ContentUnavailableView {
-                    Label { Text("Escolha um túnel") } icon: { RosenMarkView(size: 34) }
+                    Label { Text("Escolha um item") } icon: { RosenMarkView(size: 34) }
                 } description: {
-                    Text("Selecione um túnel na barra lateral.")
+                    Text("Selecione um túnel ou servidor na barra lateral.")
                 }
             }
         }
@@ -115,6 +145,12 @@ struct EmptyStateView: View {
                 }
                 .buttonStyle(PillButtonStyle(fill: .indigo, filled: false))
             }
+
+            HStack(spacing: 16) {
+                Button("Ou cadastre um servidor para abrir no terminal") { store.newServer() }
+                Button("Importar do ~/.ssh/config") { store.showingSSHConfigImport = true }
+            }
+            .buttonStyle(.link)
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -142,6 +178,12 @@ struct VaultErrorView: View {
 struct SidebarView: View {
     @Environment(AppStore.self) private var store
     @State private var query = ""
+
+    private var filteredServers: [Server] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return store.servers }
+        return store.servers.filter { "\($0.displayName) \($0.host) \($0.user) \($0.port)".lowercased().contains(q) }
+    }
 
     private var filtered: [Tunnel] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -173,19 +215,47 @@ struct SidebarView: View {
                     }
                 }
             }
+
+            Section {
+                ForEach(filteredServers) { server in
+                    ServerRow(server: server)
+                        .tag(server.id)
+                        .contextMenu { ServerContextMenu(id: server.id) }
+                }
+                .onMove(perform: query.isEmpty ? { store.moveServers(from: $0, to: $1) } : nil)
+                if store.servers.isEmpty && query.isEmpty {
+                    ServersEmptyRow()
+                        .selectionDisabled()
+                        .listRowSeparator(.hidden)
+                }
+            } header: {
+                Text("Servidores")
+            }
         }
         .listStyle(.sidebar)
         .searchable(text: $query, placement: .sidebar, prompt: "Buscar")
-        .onDeleteCommand { if let id = store.selection { store.requestDelete(id) } }
+        .onDeleteCommand {
+            guard let id = store.selection else { return }
+            if store.server(id) != nil { store.requestDeleteServer(id) } else { store.requestDelete(id) }
+        }
         .overlay {
-            if !query.isEmpty && filtered.isEmpty {
+            if !query.isEmpty && filtered.isEmpty && filteredServers.isEmpty {
                 ContentUnavailableView.search(text: query)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             HStack(spacing: 4) {
-                Button { store.newTunnel() } label: { Image(systemName: "plus").frame(width: 22, height: 22) }
-                    .help("Novo túnel (⌘N)")
+                Menu {
+                    Button("Novo túnel") { store.newTunnel() }
+                    Button("Novo servidor") { store.newServer() }
+                    Divider()
+                    Button("Importar do ~/.ssh/config…") { store.showingSSHConfigImport = true }
+                } label: {
+                    Image(systemName: "plus").frame(width: 22, height: 22)
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Novo túnel ou servidor")
                 Spacer()
                 if store.activeCount > 0 {
                     Button("Desconectar todos") { store.disconnectAll() }
@@ -201,6 +271,48 @@ struct SidebarView: View {
             .background(.bar)
             .overlay(alignment: .top) { Divider() }
         }
+    }
+}
+
+/// Convite para cadastrar o primeiro servidor, no lugar onde as linhas vão aparecer.
+struct ServersEmptyRow: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 30 * 0.28, style: .continuous)
+                    .strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1.2, dash: [3, 2.5]))
+                    .frame(width: 30, height: 30)
+                    .overlay {
+                        Image(systemName: Server.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Nenhum servidor")
+                        .font(.body.weight(.medium))
+                    Text("Cadastre ou importe do ~/.ssh/config para abrir no \(TerminalApp.preferred.title).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack(spacing: 6) {
+                Button { store.newServer() } label: {
+                    Label("Novo", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                Button { store.showingSSHConfigImport = true } label: {
+                    Label("Importar", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .help("Importar hosts do ~/.ssh/config")
+            }
+            .controlSize(.small)
+            .padding(.leading, 40)
+        }
+        .padding(.vertical, 6)
     }
 }
 
