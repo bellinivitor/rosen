@@ -72,6 +72,8 @@ func run() {
                                                saveTarget: "na credencial “Chave de produção”", keyName: "Chave de produção")
         render(PromptView(request: retry) { _ in }.background(.background), size: CGSize(width: 440, height: 460), dark: dark,
                to: out.appendingPathComponent("prompt-retry-\(suffix).png"))
+        render(AboutView().background(.background), size: CGSize(width: 300, height: 480), dark: dark,
+               to: out.appendingPathComponent("about-\(suffix).png"))
         render(EmptyStateView().environment(store), size: CGSize(width: 760, height: 600), dark: dark,
                to: out.appendingPathComponent("empty-\(suffix).png"))
         render(SidebarView().environment(store).background(.background), size: CGSize(width: 300, height: 600), dark: dark,

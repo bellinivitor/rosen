@@ -114,6 +114,8 @@ struct RosenCommands: Commands {
         CommandGroup(replacing: .help) {
             Button("Rosen no GitHub") { NSWorkspace.shared.open(AboutPanel.repository) }
             Button("Reportar um problema…") { NSWorkspace.shared.open(AboutPanel.issues) }
+            Divider()
+            Button("Me pague um café ☕") { NSWorkspace.shared.open(AboutPanel.coffee) }
         }
         CommandGroup(replacing: .newItem) {
             Button("Novo túnel") { openMain(); store.newTunnel() }
