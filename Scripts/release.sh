@@ -21,12 +21,13 @@ publish_tap() {
   fi
   local version
   version="$(grep -E '^  version ' "$CASK" | sed -E 's/.*"(.*)".*/\1/')"
+  # Atualiza o clone antes de gravar, senão o pull recusa por haver mudança local.
+  git -C "$TAP_DIR" pull -q --rebase
   {
     echo "# Cask do Rosen: brew install --cask bellinivitor/rosen/rosen"
     echo "# Gerado pelo Scripts/release.sh do repositório bellinivitor/rosen; não edite à mão."
     grep -v '^#' "$CASK"
   } > "$TAP_DIR/Casks/rosen.rb"
-  git -C "$TAP_DIR" pull -q --rebase
   if git -C "$TAP_DIR" diff --quiet; then
     echo "Tap já está em $version."
   else
