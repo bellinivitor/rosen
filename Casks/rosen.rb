@@ -1,8 +1,8 @@
 # Fonte do Cask. O Scripts/release.sh grava versão e sha256 aqui e copia para o tap
 # bellinivitor/homebrew-rosen, de onde vem o:  brew install --cask bellinivitor/rosen/rosen
 cask "rosen" do
-  version "0.2.0-beta"
-  sha256 "ac2f610a170e5cbb9059d84c49bc2981958fe6e594a29b440b2997ce4a7cb8b4"
+  version "0.2.1-beta"
+  sha256 "d89e5bc3a88570f54b81a81272579904cf354c9865c32c6c7cb8e2bfcb1be94a"
 
   url "https://github.com/bellinivitor/rosen/releases/download/v#{version}/Rosen-#{version}.zip"
   name "Rosen"
