@@ -48,8 +48,10 @@ enum WindowID {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        DockIcon.apply()
+        DockIcon.observeWindows()
         AppStore.shared.bootstrap()
+        // Se o app abrir sem janela (ex.: ao iniciar a sessão), fica só na barra de menus.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { DockIcon.apply() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -59,12 +61,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+/// O ícone no Dock acompanha as janelas: aparece com uma janela aberta e some quando a última
+/// fecha. O Rosen continua na barra de menus, com os túneis ligados.
+@MainActor
 enum DockIcon {
-    static var isVisible: Bool { UserDefaults.standard.object(forKey: "showDockIcon") as? Bool ?? true }
+    static let keepKey = "keepDockIcon"
+    static var keepAlways: Bool { UserDefaults.standard.bool(forKey: keepKey) }
 
-    @MainActor
-    static func apply() {
-        NSApp.setActivationPolicy(isVisible ? .regular : .accessory)
+    /// Há uma janela do app aberta (principal, credenciais, ajustes), inclusive minimizada?
+    /// Não contam o painel da barra de menus, o "Sobre" e o pedido de senha.
+    static func hasOpenWindow(excluding closing: NSWindow? = nil) -> Bool {
+        NSApp.windows.contains { window in
+            window !== closing
+                && (window.isVisible || window.isMiniaturized)
+                && window.styleMask.contains(.titled)
+                && window.canBecomeMain
+                && !(window is NSPanel)
+        }
+    }
+
+    static func apply(excluding closing: NSWindow? = nil) {
+        let policy: NSApplication.ActivationPolicy =
+            keepAlways || hasOpenWindow(excluding: closing) ? .regular : .accessory
+        guard NSApp.activationPolicy() != policy else { return }
+        NSApp.setActivationPolicy(policy)
+        // Ao voltar para o Dock, traz a janela para a frente.
+        if policy == .regular { NSApp.activate(ignoringOtherApps: true) }
+    }
+
+    static func observeWindows() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { apply() }
+        }
+        center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { note in
+            let closing = note.object as? NSWindow
+            MainActor.assumeIsolated { apply(excluding: closing) }
+        }
     }
 }
 
@@ -137,7 +170,7 @@ struct RosenCommands: Commands {
 
 struct SettingsView: View {
     @Environment(AppStore.self) private var store
-    @AppStorage("showDockIcon") private var showDockIcon = true
+    @AppStorage(DockIcon.keepKey) private var keepDockIcon = false
     @AppStorage("notifyDrops") private var notifyDrops = true
     @AppStorage(Unlocker.graceKey) private var graceMinutes = 15
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -159,11 +192,11 @@ struct SettingsView: View {
                 if let loginError {
                     Text(loginError).font(.caption).foregroundStyle(.orange)
                 }
-                Toggle("Mostrar ícone no Dock", isOn: $showDockIcon)
-                    .onChange(of: showDockIcon) { _, _ in DockIcon.apply() }
+                Toggle("Manter no Dock com a janela fechada", isOn: $keepDockIcon)
+                    .onChange(of: keepDockIcon) { _, _ in DockIcon.apply() }
                 Toggle("Avisar quando um túnel cair", isOn: $notifyDrops)
             } footer: {
-                Text("Sem o ícone no Dock, o Rosen continua acessível pela barra de menus.")
+                Text("Ao fechar a janela, o Rosen fica só na barra de menus e os túneis continuam ligados. ⌘Q sai de vez.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
