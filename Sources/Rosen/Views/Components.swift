@@ -257,3 +257,86 @@ struct ToastView: View {
             .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
     }
 }
+
+// MARK: - Latência
+
+extension Latency.Quality {
+    var color: Color {
+        switch self {
+        case .good: return .green
+        case .fair: return .orange
+        case .poor: return .red
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .good: return "boa"
+        case .fair: return "razoável"
+        case .poor: return "alta"
+        }
+    }
+}
+
+/// "23 ms", colorido pela qualidade. Some quando o túnel não está conectado.
+struct LatencyBadge: View {
+    let session: TunnelSession
+    var showsSparkline = false
+
+    var body: some View {
+        if session.status.isConnected {
+            HStack(spacing: 6) {
+                if !session.latencyAvailable {
+                    Text("sem ping")
+                        .foregroundStyle(.tertiary)
+                        .help("O servidor não responde a ping, ou há um bastion no meio. O túnel funciona normalmente.")
+                } else if let ms = session.latency {
+                    let quality = Latency.quality(ms)
+                    if showsSparkline {
+                        Sparkline(samples: session.latencySamples, color: quality.color)
+                            .frame(width: 54, height: 16)
+                    }
+                    Circle().fill(quality.color).frame(width: 6, height: 6)
+                    Text("\(Int(ms.rounded())) ms")
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .animation(.snappy, value: Int(ms.rounded()))
+                } else {
+                    Text("medindo…").foregroundStyle(.tertiary)
+                }
+            }
+            .help(helpText)
+        }
+    }
+
+    private var helpText: String {
+        guard let ms = session.latency else { return "Latência até o servidor (ping)" }
+        return "Latência até o servidor: \(Int(ms.rounded())) ms (\(Latency.quality(ms).label)). Medida por ping a cada 5 s."
+    }
+}
+
+/// Mini gráfico das últimas medições; falhas aparecem como lacunas.
+struct Sparkline: View {
+    let samples: [Double?]
+    let color: Color
+
+    var body: some View {
+        Canvas { ctx, size in
+            let values = samples.compactMap { $0 }
+            guard values.count >= 2, let maxV = values.max(), let minV = values.min() else { return }
+            let span = max(maxV - minV, 10) // evita exagerar variações de 1–2 ms
+            let step = size.width / CGFloat(max(samples.count - 1, 1))
+            var path = Path()
+            var drawing = false
+            for (i, sample) in samples.enumerated() {
+                guard let v = sample else { drawing = false; continue }
+                let point = CGPoint(x: CGFloat(i) * step,
+                                    y: size.height - 1.5 - CGFloat((v - minV) / span) * (size.height - 3))
+                if drawing { path.addLine(to: point) } else { path.move(to: point); drawing = true }
+            }
+            ctx.stroke(path, with: .color(color.opacity(0.8)),
+                       style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+        }
+        .accessibilityHidden(true)
+    }
+}

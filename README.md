@@ -74,6 +74,7 @@ Requer macOS 14 (Sonoma) ou mais recente. Funciona em Macs com Apple Silicon e I
 - **Barra de menus**: liga e desliga túneis sem abrir a janela.
 - **Reconexão automática**, com espera crescente (1 s até 30 s). Reconecta quando a rede volta e quando o Mac acorda.
 - **Erros que dá para entender**: "a porta 5433 já está em uso por postgres", "autenticação recusada", "a identidade do servidor mudou".
+- **Latência ao vivo**: com o túnel conectado, o Rosen mede o ping até o servidor a cada 5 s e mostra o valor e um mini gráfico. Usa ICMP, então não gera logs de login no servidor.
 - **Terminal embutido** em cada túnel: o comando `ssh` equivalente e a saída da conexão.
 
 ### Atalhos

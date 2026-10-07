@@ -110,7 +110,11 @@ struct MenuTunnelRow: View {
                 Group {
                     switch status {
                     case .idle: Text(tunnel.compactSummary)
-                    case .connected: Text(tunnel.clientAddress)
+                    case .connected:
+                        HStack(spacing: 8) {
+                            Text(tunnel.clientAddress)
+                            if let session { LatencyBadge(session: session) }
+                        }
                     case .failed(let message): Text(message).foregroundStyle(.red)
                     default: Text(status.label).foregroundStyle(.orange)
                     }

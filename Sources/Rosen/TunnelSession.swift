@@ -64,6 +64,12 @@ final class TunnelSession {
     private(set) var isOn = false
     private(set) var logs: [LogEntry] = []
 
+    /// Últimas medições de latência até o servidor (ms; `nil` = sem resposta). Só com túnel conectado.
+    private(set) var latencySamples: [Double?] = []
+    /// Dá para medir? Não, com bastion no meio ou quando o servidor ignora ping.
+    private(set) var latencyAvailable = true
+    var latency: Double? { Latency.smoothed(latencySamples) }
+
     @ObservationIgnored var resolve: () -> (Tunnel, Credential?)? = { nil }
     @ObservationIgnored var preflight: (Tunnel) -> String? = { _ in nil }
     /// Libera a credencial (Touch ID). Só é chamado quando ela exige presença do usuário.
@@ -97,6 +103,7 @@ final class TunnelSession {
     @ObservationIgnored private var lastTransient: String?
     @ObservationIgnored private var buffer = Data()
     @ObservationIgnored private var currentKind: ForwardKind = .local
+    @ObservationIgnored private var latencyTask: Task<Void, Never>?
 
     init(tunnelID: UUID) { self.tunnelID = tunnelID }
 
@@ -360,6 +367,7 @@ final class TunnelSession {
         attempt = 0
         status = .connected(since: Date())
         log(.success, "Túnel ativo.")
+        if let (tunnel, _) = resolve() { startLatency(for: tunnel) }
         onEvent(self, .connected)
     }
 
@@ -427,7 +435,70 @@ final class TunnelSession {
         cleanup()
     }
 
+    // MARK: - Latência
+
+    private func startLatency(for tunnel: Tunnel) {
+        latencyTask?.cancel()
+        latencySamples = []
+        latencyAvailable = true
+        latencyTask = Task { [weak self] in
+            guard let target = await Self.resolveTarget(tunnel) else { return }
+            guard let self, !Task.isCancelled else { return }
+            if target.viaProxy {
+                self.latencyAvailable = false // o ping mediria só até o bastion
+                return
+            }
+            var failures = 0
+            while !Task.isCancelled {
+                let ms = await Self.ping(target.host)
+                guard !Task.isCancelled else { return }
+                self.latencySamples.append(ms)
+                if self.latencySamples.count > 30 { self.latencySamples.removeFirst() }
+                failures = ms == nil ? failures + 1 : 0
+                self.latencyAvailable = failures < 3
+                // Servidor que não responde a ping: tenta bem menos.
+                try? await Task.sleep(for: .seconds(failures >= 3 ? 30 : 5))
+            }
+        }
+    }
+
+    private func stopLatency() {
+        latencyTask?.cancel()
+        latencyTask = nil
+        latencySamples = []
+        latencyAvailable = true
+    }
+
+    private nonisolated static func resolveTarget(_ tunnel: Tunnel) async -> Latency.Target? {
+        await Task.detached(priority: .utility) {
+            let out = run("/usr/bin/ssh", Latency.sshConfigArguments(for: tunnel))
+            return out.flatMap(Latency.target(fromSSHConfig:))
+        }.value
+    }
+
+    private nonisolated static func ping(_ host: String) async -> Double? {
+        await Task.detached(priority: .utility) {
+            run("/sbin/ping", Latency.pingArguments(host: host)).flatMap(Latency.milliseconds(fromPing:))
+        }.value
+    }
+
+    /// Roda um comando curto e devolve a saída padrão.
+    private nonisolated static func run(_ path: String, _ args: [String]) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        p.standardInput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        let out = Pipe()
+        p.standardOutput = out
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
     private func cleanup() {
+        stopLatency()
         broker?.cancel(); broker = nil
         if let id = openInputID { openInputID = nil; dismissInput(id) }
         pendingSave = nil
@@ -452,8 +523,9 @@ final class TunnelSession {
 #if SNAPSHOT
 extension TunnelSession {
     /// Só para o gerador de capturas (Scripts/build.sh snapshot).
-    func setSnapshotState(_ status: Status, logs: [(LogEntry.Level, String)]) {
+    func setSnapshotState(_ status: Status, logs: [(LogEntry.Level, String)], latency: [Double?] = []) {
         self.status = status
+        self.latencySamples = latency
         self.isOn = status != .idle && !{ if case .failed = status { return true }; return false }()
         self.logs = logs.map { LogEntry(level: $0.0, text: $0.1) }
     }

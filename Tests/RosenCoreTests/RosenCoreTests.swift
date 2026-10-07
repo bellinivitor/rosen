@@ -180,6 +180,44 @@ struct LogTests {
     }
 }
 
+@Suite("Latência")
+struct LatencyTests {
+    @Test func leSaidaDoSshG() throws {
+        let out = """
+        user deploy
+        hostname 178.0.0.10
+        port 2222
+        proxyjump none
+        """
+        let t = try #require(Latency.target(fromSSHConfig: out))
+        #expect(t.host == "178.0.0.10")
+        #expect(!t.viaProxy)
+        #expect(Latency.target(fromSSHConfig: "hostname db\nproxyjump bastion")?.viaProxy == true)
+        #expect(Latency.target(fromSSHConfig: "user x") == nil)
+    }
+
+    @Test func leSaidaDoPing() {
+        let ok = "64 bytes from 1.2.3.4: icmp_seq=0 ttl=52 time=23.456 ms"
+        #expect(Latency.milliseconds(fromPing: ok) == 23.456)
+        #expect(Latency.milliseconds(fromPing: "time<1 ms") == 1)
+        #expect(Latency.milliseconds(fromPing: "Request timeout for icmp_seq 0") == nil)
+    }
+
+    @Test func qualidadeESuavizacao() {
+        #expect(Latency.quality(40) == .good)
+        #expect(Latency.quality(120) == .fair)
+        #expect(Latency.quality(240) == .fair)
+        #expect(Latency.quality(400) == .poor)
+        #expect(Latency.smoothed([10, nil, 20, 30]) == 25)
+        #expect(Latency.smoothed([nil, nil]) == nil)
+    }
+
+    @Test func argumentosDoSshG() {
+        let t = Tunnel(host: "stage", port: 2200, user: "ana", extraOptions: ["ProxyJump=bastion"])
+        #expect(Latency.sshConfigArguments(for: t) == ["-G", "-o", "ProxyJump=bastion", "-p", "2200", "ana@stage"])
+    }
+}
+
 @Suite("Infra")
 struct InfraTests {
     /// Roda o askpass como o ssh faria e devolve (saída, código de saída).

@@ -37,7 +37,7 @@ func run() {
         (.info, "Conectando a deploy@db.exemplo.com…"), (.info, "Conexão TCP estabelecida."),
         (.info, "Servidor aceitou a chave."), (.info, "Autenticado."), (.success, "Túnel ativo."),
         (.warning, "O destino recusou uma conexão — o serviço está rodando nessa porta?"),
-    ])
+    ], latency: [24, 26, 23, 31, 27, 25, 48, 29, 26, 24, 25, nil, 27, 26, 23, 25, 24, 28, 26, 25])
     store.session(b.id)?.setSnapshotState(.failed("Autenticação recusada. Confira o usuário e a credencial."), logs: [
         (.info, "Conectando a ops@cache.interno…"), (.error, "Autenticação recusada. Confira o usuário e a credencial."),
     ])
