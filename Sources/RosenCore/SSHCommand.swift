@@ -31,22 +31,44 @@ public enum SSHCommand {
             "-o", "ControlPath=none",
         ]
 
-        switch auth {
-        case .system:
-            break
-        case .identityFile(let path):
-            args += ["-i", path, "-o", "IdentitiesOnly=yes"]
-        case .password:
-            args += [
-                "-o", "PubkeyAuthentication=no",
-                "-o", "PreferredAuthentications=password,keyboard-interactive",
-            ]
-        }
-
+        args += authArguments(auth)
         args += ["-p", String(t.port)]
         args += [t.kind.flag, forwardSpec(for: t, omitLoopbackBind: t.kind == .remote)]
         args.append(t.destination)
         return args
+    }
+
+    /// Argumentos de uma sessão interativa (num terminal). Nunca contêm segredos.
+    public static func interactiveArguments(for s: Server, auth: AuthMaterial) -> [String] {
+        var args = ["-t"]
+        for option in s.extraOptions where !option.trimmingCharacters(in: .whitespaces).isEmpty {
+            args += ["-o", option.trimmingCharacters(in: .whitespaces)]
+        }
+        args += [
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
+            "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "NumberOfPasswordPrompts=3",
+        ]
+        args += authArguments(auth)
+        args += ["-p", String(s.port)]
+        args.append(s.destination)
+        return args
+    }
+
+    static func authArguments(_ auth: AuthMaterial) -> [String] {
+        switch auth {
+        case .system:
+            return []
+        case .identityFile(let path):
+            return ["-i", path, "-o", "IdentitiesOnly=yes"]
+        case .password:
+            return [
+                "-o", "PubkeyAuthentication=no",
+                "-o", "PreferredAuthentications=password,keyboard-interactive",
+            ]
+        }
     }
 
     public static func forwardSpec(for t: Tunnel, omitLoopbackBind: Bool) -> String {
@@ -65,17 +87,32 @@ public enum SSHCommand {
     public static func displayString(for t: Tunnel, credential: Credential?) -> String {
         var parts = ["ssh", "-N", t.kind.flag, forwardSpec(for: t, omitLoopbackBind: true)]
         if t.port != 22 { parts += ["-p", String(t.port)] }
-        switch credential?.kind {
-        case .keyFile?:
-            if let path = credential?.keyPath, !path.isEmpty { parts += ["-i", Paths.abbreviate(path)] }
-        case .keyContent?:
-            parts += ["-i", "<chave-do-cofre>"]
-        default:
-            break
-        }
+        parts += identityParts(credential)
         for option in t.extraOptions where !option.isEmpty { parts += ["-o", option] }
         parts.append(t.destination.isEmpty ? "usuario@servidor" : t.destination)
         return parts.map(shellQuote).joined(separator: " ")
+    }
+
+    /// Comando interativo equivalente, legível e copiável.
+    public static func displayString(for s: Server, credential: Credential?) -> String {
+        var parts = ["ssh"]
+        if s.port != 22 { parts += ["-p", String(s.port)] }
+        parts += identityParts(credential)
+        for option in s.extraOptions where !option.isEmpty { parts += ["-o", option] }
+        parts.append(s.destination.isEmpty ? "usuario@servidor" : s.destination)
+        return parts.map(shellQuote).joined(separator: " ")
+    }
+
+    static func identityParts(_ credential: Credential?) -> [String] {
+        switch credential?.kind {
+        case .keyFile?:
+            if let path = credential?.keyPath, !path.isEmpty { return ["-i", Paths.abbreviate(path)] }
+            return []
+        case .keyContent?:
+            return ["-i", "<chave-do-cofre>"]
+        default:
+            return []
+        }
     }
 
     public static func isLoopback(_ address: String) -> Bool {
@@ -86,7 +123,7 @@ public enum SSHCommand {
         host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
     }
 
-    static func shellQuote(_ s: String) -> String {
+    public static func shellQuote(_ s: String) -> String {
         let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./-_~[]<>")
         if !s.isEmpty, s.unicodeScalars.allSatisfy({ safe.contains($0) }) { return s }
         return "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"

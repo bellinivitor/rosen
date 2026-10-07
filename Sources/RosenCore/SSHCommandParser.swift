@@ -4,6 +4,11 @@ public struct ParsedSSHCommand: Equatable, Sendable {
     public var tunnel: Tunnel
     public var identityFile: String?
     public var hasForward: Bool
+
+    /// O destino do comando como servidor (encaminhamentos são ignorados).
+    public var server: Server {
+        Server(host: tunnel.host, port: tunnel.port, user: tunnel.user, extraOptions: tunnel.extraOptions)
+    }
 }
 
 /// Entende comandos como `ssh -N -L 5433:127.0.0.1:5432 usuario@servidor.com`

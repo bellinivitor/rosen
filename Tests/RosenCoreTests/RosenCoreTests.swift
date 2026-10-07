@@ -168,6 +168,287 @@ struct VaultTests {
     }
 }
 
+@Suite("Servidores")
+struct ServerTests {
+    @Test func cofreAntigoSemServidores() throws {
+        let json = #"{"version":1,"tunnels":[{"name":"Prod","host":"db"}],"credentials":[]}"#
+        let payload = try JSONDecoder().decode(VaultPayload.self, from: Data(json.utf8))
+        #expect(payload.servers.isEmpty)
+        #expect(payload.tunnels.first?.name == "Prod")
+    }
+
+    @Test func idaEVoltaNoCofre() throws {
+        let key = SymmetricKey(size: .bits256)
+        let cred = UUID()
+        let s = Server(name: "Web", host: "srv.io", port: 2222, user: "ana", credentialID: cred,
+                       tag: .green, extraOptions: ["ProxyJump=bastion"])
+        let opened = try Vault.open(Vault.seal(VaultPayload(servers: [s]), key: key), key: key)
+        let back = try #require(opened.servers.first)
+        #expect(back.id == s.id)
+        #expect(back.host == "srv.io")
+        #expect(back.port == 2222)
+        #expect(back.user == "ana")
+        #expect(back.credentialID == cred)
+        #expect(back.tag == .green)
+        #expect(back.extraOptions == ["ProxyJump=bastion"])
+    }
+
+    @Test func servidorParcialUsaPadroes() throws {
+        let s = try JSONDecoder().decode(Server.self, from: Data(#"{"host":"x"}"#.utf8))
+        #expect(s.port == 22)
+        #expect(s.user == "")
+        #expect(s.credentialID == nil)
+        #expect(s.extraOptions.isEmpty)
+    }
+
+    @Test func nomesEResumo() {
+        #expect(Server().displayName == "Novo servidor")
+        #expect(Server(host: "srv.io").displayName == "srv.io")
+        #expect(Server(host: "srv.io", user: "ana").displayName == "ana@srv.io")
+        #expect(Server(name: " Web ", host: "srv.io").displayName == "Web")
+        #expect(Server(host: "srv.io", user: "ana").summary == "ana@srv.io")
+        #expect(Server(host: "srv.io", port: 2222).summary == "srv.io:2222")
+    }
+
+    @Test func tunelAPartirDoServidor() {
+        let cred = UUID()
+        let s = Server(host: "srv.io", port: 2222, user: "ana", credentialID: cred, tag: .red, extraOptions: ["A=b"])
+        let t = s.makeTunnel()
+        #expect(t.host == "srv.io")
+        #expect(t.port == 2222)
+        #expect(t.user == "ana")
+        #expect(t.credentialID == cred)
+        #expect(t.tag == .red)
+        #expect(t.extraOptions == ["A=b"])
+        #expect(t.id != s.id)
+    }
+}
+
+@Suite("Sessão interativa")
+struct InteractiveTests {
+    @Test func argumentosInterativos() {
+        let s = Server(host: "srv.io", port: 2222, user: "ana", extraOptions: ["ProxyJump=bastion"])
+        let args = SSHCommand.interactiveArguments(for: s, auth: .identityFile("/tmp/k"))
+        #expect(args.first == "-t")
+        #expect(!args.contains("-N"))
+        #expect(!args.contains("-v"))
+        #expect(!args.contains("ExitOnForwardFailure=yes"))
+        #expect(args.contains("StrictHostKeyChecking=accept-new"))
+        #expect(args.suffix(3) == ["-p", "2222", "ana@srv.io"])
+        let i = try! #require(args.firstIndex(of: "-i"))
+        #expect(args[i + 1] == "/tmp/k")
+        #expect(args.contains("IdentitiesOnly=yes"))
+        // Opções do usuário vêm antes das do Rosen.
+        #expect(args.firstIndex(of: "ProxyJump=bastion")! < args.firstIndex(of: "ServerAliveInterval=15")!)
+    }
+
+    @Test func argumentosComSenhaOuAgente() {
+        let s = Server(host: "h")
+        let pw = SSHCommand.interactiveArguments(for: s, auth: .password)
+        #expect(pw.contains("PubkeyAuthentication=no"))
+        #expect(!pw.contains("-i"))
+        let agent = SSHCommand.interactiveArguments(for: s, auth: .system)
+        #expect(!agent.contains("-i"))
+        #expect(!agent.contains("PubkeyAuthentication=no"))
+        #expect(agent.last == "h")
+    }
+
+    @Test func comandoExibido() {
+        let s = Server(host: "srv.io", port: 2222, user: "ana", extraOptions: ["ProxyJump=bastion"])
+        let key = Credential(kind: .keyFile, keyPath: "/tmp/minha chave")
+        #expect(SSHCommand.displayString(for: s, credential: key) == "ssh -p 2222 -i '/tmp/minha chave' -o ProxyJump=bastion ana@srv.io")
+        #expect(SSHCommand.displayString(for: Server(host: "h"), credential: nil) == "ssh h")
+        #expect(SSHCommand.displayString(for: Server(), credential: Credential(kind: .keyContent)) == "ssh -i <chave-do-cofre> usuario@servidor")
+    }
+
+    @Test func servidorAPartirDeComando() throws {
+        let p = try #require(SSHCommandParser.parse("ssh -p 2222 -i ~/.ssh/k -J bastion deploy@srv.io"))
+        let s = p.server
+        #expect(s.host == "srv.io")
+        #expect(s.port == 2222)
+        #expect(s.user == "deploy")
+        #expect(s.extraOptions == ["ProxyJump=bastion"])
+        #expect(p.identityFile == "~/.ssh/k")
+
+        let withForward = try #require(SSHCommandParser.parse("ssh -N -L 5433:127.0.0.1:5432 root@db.io"))
+        #expect(withForward.server.host == "db.io")
+        #expect(withForward.server.port == 22)
+
+        let v6 = try #require(SSHCommandParser.parse("ssh ssh://admin@[::1]:2022"))
+        #expect(v6.server.host == "::1")
+        #expect(v6.server.port == 2022)
+        #expect(v6.server.user == "admin")
+    }
+}
+
+@Suite("~/.ssh/config")
+struct SSHConfigTests {
+    @Test func blocosBasicos() {
+        let text = """
+        # comentário
+        Host prod
+            HostName 10.0.0.5
+            User deploy
+            Port 2222
+            IdentityFile ~/.ssh/prod
+            ProxyJump bastion
+
+        Host web staging   # dois aliases
+          hostname=web.internal
+          USER = "ana"
+        """
+        let hosts = SSHConfigParser.parse(text)
+        #expect(hosts.map(\.alias) == ["prod", "web", "staging"])
+        let prod = hosts[0]
+        #expect(prod.hostName == "10.0.0.5")
+        #expect(prod.user == "deploy")
+        #expect(prod.port == 2222)
+        #expect(prod.identityFile == "~/.ssh/prod")
+        #expect(prod.proxyJump == "bastion")
+        #expect(prod.summary == "deploy@10.0.0.5:2222 via bastion")
+        #expect(hosts[1].hostName == "web.internal")
+        #expect(hosts[2].user == "ana")
+        #expect(hosts[1].port == nil)
+    }
+
+    @Test func curingasEMatchIgnorados() {
+        let text = """
+        Host *
+            User root
+        Host *.corp !foo db?
+            User x
+        Match host foo
+            User y
+        Host real
+            HostName r.io
+        """
+        let hosts = SSHConfigParser.parse(text)
+        #expect(hosts.map(\.alias) == ["real"])
+        #expect(hosts[0].user == nil)
+
+        // Opções depois de um Match não vazam para o Host anterior.
+        let after = SSHConfigParser.parse("Host real\nMatch user x\n  User vazou")
+        #expect(after.first?.user == nil)
+    }
+
+    @Test func primeiroValorVence() {
+        let text = """
+        Host a
+            User um
+            User dois
+        Host a
+            User tres
+            Port 2200
+        """
+        let hosts = SSHConfigParser.parse(text)
+        #expect(hosts.count == 1)
+        #expect(hosts[0].user == "um")
+        #expect(hosts[0].port == 2200)
+    }
+
+    @Test func include() {
+        let text = """
+        Include conf.d/*
+        Host principal
+        """
+        let hosts = SSHConfigParser.parse(text) { pattern in
+            pattern == "conf.d/*" ? ["Host incluido\n  User z"] : []
+        }
+        #expect(hosts.map(\.alias) == ["incluido", "principal"])
+        #expect(hosts[0].user == "z")
+    }
+
+    @Test func includeCircularNaoTravas() {
+        let hosts = SSHConfigParser.parse("Include self\nHost x") { _ in ["Include self\nHost x"] }
+        #expect(hosts.map(\.alias) == ["x"])
+    }
+
+    @Test func viraServidor() {
+        let s = SSHConfigHost(alias: "prod", hostName: "10.0.0.5", user: "deploy", port: 2222, proxyJump: "b").server
+        #expect(s.name == "prod")
+        #expect(s.host == "prod")
+        #expect(s.user == "deploy")
+        #expect(s.port == 2222)
+        #expect(s.extraOptions.isEmpty) // o ssh lê ProxyJump do próprio config
+        #expect(SSHConfigHost(alias: "x").server.port == 22)
+    }
+
+    @Test func arquivoNoDisco() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("conf.d"), withIntermediateDirectories: true)
+        try "Include conf.d/*.conf\nHost a".write(to: dir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+        try "Host b".write(to: dir.appendingPathComponent("conf.d/1.conf"), atomically: true, encoding: .utf8)
+        try "Host c".write(to: dir.appendingPathComponent("conf.d/2.txt"), atomically: true, encoding: .utf8)
+        #expect(SSHConfigParser.load(from: dir.appendingPathComponent("config"))?.map(\.alias) == ["b", "a"])
+        #expect(SSHConfigParser.load(from: dir.appendingPathComponent("nada")) == nil)
+    }
+}
+
+@Suite("Terminal")
+struct TerminalTests {
+    @Test func scriptDeConexao() {
+        let script = ConnectScript.make(
+            title: "Prod \u{1B}]0;x",
+            arguments: ["-t", "-i", "/tmp/minha chave", "-o", "ProxyCommand=nc 'x' %h", "ana@srv.io"],
+            environment: ["ROSEN_ASKPASS_REQ": "/tmp/a b/ask.req", "SSH_ASKPASS": "/x/askpass.sh"]
+        )
+        let lines = script.split(separator: "\n").map(String.init)
+        #expect(lines.first == "#!/bin/sh")
+        #expect(lines.contains("rm -f \"$0\""))
+        #expect(lines.contains("export ROSEN_ASKPASS_REQ='/tmp/a b/ask.req'"))
+        #expect(lines.contains("export SSH_ASKPASS=/x/askpass.sh"))
+        #expect(lines.last == "exec /usr/bin/ssh -t -i '/tmp/minha chave' -o 'ProxyCommand=nc '\\''x'\\'' %h' ana@srv.io")
+        #expect(!script.contains("\u{1B}"))
+    }
+
+    @Test func ambienteDoAskpass() {
+        let env = ConnectScript.askpassEnvironment(askpassPath: "/a.sh", broker: ["ROSEN_ASKPASS_REQ": "r", "ROSEN_ASKPASS_RESP": "s"])
+        #expect(env["SSH_ASKPASS"] == "/a.sh")
+        #expect(env["SSH_ASKPASS_REQUIRE"] == "force")
+        #expect(env["ROSEN_ASKPASS_TTY"] == "1")
+        #expect(env["ROSEN_ASKPASS_REQ"] == "r")
+        #expect(env["ROSEN_ASKPASS_RESP"] == "s")
+    }
+
+    @Test func scriptRodaDeVerdadeESeApaga() throws {
+        let ws = try ConnectionWorkspace()
+        defer { ws.destroy() }
+        // `ssh -V` só imprime a versão: prova que as aspas e o exec funcionam.
+        let url = try ConnectScript.write(ConnectScript.make(title: "t", arguments: ["-V"], environment: ["X": "1 2"]), in: ws)
+        let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(perms == 0o700)
+        let p = Process()
+        p.executableURL = url
+        let err = Pipe()
+        p.standardError = err
+        p.standardOutput = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+        #expect(p.terminationStatus == 0)
+        #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).contains("OpenSSH"))
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func terminais() {
+        #expect(TerminalApp.warp.bundleIdentifier == "dev.warp.Warp-Stable")
+        #expect(TerminalApp.terminal.bundleIdentifier == "com.apple.Terminal")
+        #expect(TerminalApp(rawValue: "warp") == .warp)
+    }
+}
+
+@Suite("Aceite sem ver a saída")
+struct AcceptanceTests {
+    @Test func proximoPedidoDecide() {
+        #expect(!AskpassPrompt.previousWasAccepted(previous: .password, next: .password))
+        #expect(AskpassPrompt.previousWasAccepted(previous: .password, next: .other))
+        #expect(!AskpassPrompt.previousWasAccepted(previous: .passphrase(keyPath: "/k"), next: .passphrase(keyPath: "/k")))
+        #expect(AskpassPrompt.previousWasAccepted(previous: .passphrase(keyPath: "/k"), next: .passphrase(keyPath: "/outra")))
+        #expect(AskpassPrompt.previousWasAccepted(previous: .passphrase(keyPath: nil), next: .password))
+        #expect(!AskpassPrompt.previousWasAccepted(previous: .other, next: .other))
+    }
+}
+
 @Suite("Logs do ssh")
 struct LogTests {
     @Test func eventos() {
@@ -257,6 +538,10 @@ struct InfraTests {
         let (_, confirm) = try ask(script, "Are you sure you want to continue connecting (yes/no/[fingerprint])?", env: broker.environment)
         #expect(confirm == 1)
         #expect(seen.value == ["(ana@host) Password:", "Verification code:"])
+
+        // Sem os FIFOs (Rosen não escuta) e fora de um terminal: falha em vez de travar.
+        let (_, gone) = try ask(script, "Password:", env: ["ROSEN_ASKPASS_REQ": "/nao/existe", "ROSEN_ASKPASS_RESP": "/nao/existe"])
+        #expect(gone == 1)
     }
 
     @Test func classificaPedidos() {

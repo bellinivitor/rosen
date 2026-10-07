@@ -11,7 +11,18 @@ public enum Askpass {
     case "$1" in
       *"(yes/no"*|*fingerprint*) exit 1 ;;
     esac
-    [ -p "$ROSEN_ASKPASS_REQ" ] && [ -p "$ROSEN_ASKPASS_RESP" ] || exit 1
+    if ! { [ -p "$ROSEN_ASKPASS_REQ" ] && [ -p "$ROSEN_ASKPASS_RESP" ]; }; then
+      # Sessão num terminal e o Rosen já não escuta: pergunta no próprio terminal.
+      [ "$ROSEN_ASKPASS_TTY" = 1 ] || exit 1
+      printf '%s' "$1" > /dev/tty 2>/dev/null || exit 1
+      stty -echo < /dev/tty 2>/dev/null
+      IFS= read -r line < /dev/tty; status=$?
+      stty echo < /dev/tty 2>/dev/null
+      printf '\n' > /dev/tty
+      [ $status -eq 0 ] || exit 1
+      printf '%s\n' "$line"
+      exit 0
+    fi
     prompt=$(printf '%s' "$1" | tr '\r\n' '  ')
     printf '%s\n' "$prompt" > "$ROSEN_ASKPASS_REQ" || exit 1
     IFS= read -r line < "$ROSEN_ASKPASS_RESP" || exit 1
@@ -62,6 +73,16 @@ public enum AskpassPrompt: Equatable, Sendable {
         }
         if l.contains("password") || l.contains("senha") { return .password }
         return .other
+    }
+
+    /// Sem ver a saída do ssh (sessão num terminal), o próximo pedido diz se o anterior deu certo:
+    /// o mesmo pedido de novo é uma recusa; um pedido diferente (ex.: senha → código 2FA) é um aceite.
+    public static func previousWasAccepted(previous: AskpassPrompt, next: AskpassPrompt) -> Bool {
+        switch (previous, next) {
+        case (.password, .password), (.other, .other): return false
+        case (.passphrase(let a), .passphrase(let b)): return a != b
+        default: return true
+        }
     }
 }
 

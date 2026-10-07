@@ -332,11 +332,22 @@ public struct VaultPayload: Codable, Equatable, Sendable {
     public var version: Int
     public var tunnels: [Tunnel]
     public var credentials: [Credential]
+    public var servers: [Server]
 
-    public init(version: Int = 1, tunnels: [Tunnel] = [], credentials: [Credential] = []) {
+    public init(version: Int = 1, tunnels: [Tunnel] = [], credentials: [Credential] = [], servers: [Server] = []) {
         self.version = version
         self.tunnels = tunnels
         self.credentials = credentials
+        self.servers = servers
+    }
+
+    // Cofres antigos não têm `servers`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? 1
+        tunnels = try c.decodeIfPresent([Tunnel].self, forKey: .tunnels) ?? []
+        credentials = try c.decodeIfPresent([Credential].self, forKey: .credentials) ?? []
+        servers = try c.decodeIfPresent([Server].self, forKey: .servers) ?? []
     }
 }
 
