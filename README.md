@@ -13,6 +13,7 @@
   <a href="https://github.com/bellinivitor/rosen/releases"><img src="https://img.shields.io/github/v/release/bellinivitor/rosen?include_prereleases&label=vers%C3%A3o" alt="Versão"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-blue" alt="macOS 14+">
   <img src="https://img.shields.io/badge/Swift-SwiftUI-orange" alt="SwiftUI">
+  <a href="https://buymeacoffee.com/vitorbellini"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-%E2%98%95-FFDD00" alt="Buy Me a Coffee"></a>
 </p>
 
 <p align="center">
@@ -153,3 +154,9 @@ xcrun notarytool submit dist/Rosen-0.2.0.zip --keychain-profile rosen --wait
 ## Por que "Rosen"
 
 Vem da ponte de Einstein-Rosen, o "buraco de minhoca": um atalho que liga dois pontos distantes do espaço como se estivessem lado a lado. É o que um túnel SSH faz com um banco remoto.
+
+## Apoie
+
+Se este projeto te ajudou, você pode me pagar um café ☕
+
+<a href="https://buymeacoffee.com/vitorbellini"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="40"></a>
