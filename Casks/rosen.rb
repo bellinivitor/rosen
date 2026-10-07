@@ -10,7 +10,7 @@ cask "rosen" do
   desc "Gerenciador nativo de túneis SSH"
   homepage "https://github.com/bellinivitor/rosen"
 
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "Rosen.app"
 
