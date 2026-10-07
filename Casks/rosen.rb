@@ -1,6 +1,5 @@
-# Este repositório também é o tap do Homebrew:
-#   brew tap bellinivitor/rosen https://github.com/bellinivitor/rosen
-#   brew install --cask rosen
+# Fonte do Cask. O Scripts/release.sh grava versão e sha256 aqui e copia para o tap
+# bellinivitor/homebrew-rosen, de onde vem o:  brew install --cask bellinivitor/rosen/rosen
 cask "rosen" do
   version "0.1.0-beta"
   sha256 "b90190cdfc1c666f8d57f571174c33ff0ae6144cbcb9898a9782227063375b0e"

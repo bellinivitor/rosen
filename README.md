@@ -34,8 +34,7 @@ você cola esse comando no Rosen uma vez e, dali em diante, liga e desliga o tú
 Com o [Homebrew](https://brew.sh):
 
 ```bash
-brew tap bellinivitor/rosen https://github.com/bellinivitor/rosen
-brew install --cask rosen
+brew install --cask bellinivitor/rosen/rosen
 ```
 
 Ou baixe o `.zip` na [página de releases](https://github.com/bellinivitor/rosen/releases) e arraste o `Rosen.app` para a pasta Aplicativos.
@@ -125,7 +124,7 @@ Sources/RosenCore   modelos, parser de comando ssh, cofre, logs do ssh, askpass,
 Sources/Rosen       app SwiftUI: sessões ssh, store, telas
 Tests/              testes do núcleo
 Scripts/            build, release, ícone e capturas de tela
-Casks/rosen.rb      Cask do Homebrew (este repositório também é o tap)
+Casks/rosen.rb      fonte do Cask (publicado no tap bellinivitor/homebrew-rosen)
 ```
 
 ### Publicar uma versão
@@ -139,7 +138,10 @@ Isso gera `dist/Rosen-0.2.0.zip` (arm64 + x86_64) e grava versão e sha256 em `C
 ```bash
 git commit -am "chore: release 0.2.0" && git push
 gh release create v0.2.0 dist/Rosen-0.2.0.zip
+Scripts/release.sh --tap    # publica o Cask no tap bellinivitor/homebrew-rosen
 ```
+
+O `--tap` precisa de um clone do tap em `../homebrew-rosen` (`gh repo clone bellinivitor/homebrew-rosen ../homebrew-rosen`) e vem por último: o Cask aponta para o zip da release.
 
 Com uma conta de desenvolvedor Apple, assine e notarize:
 
