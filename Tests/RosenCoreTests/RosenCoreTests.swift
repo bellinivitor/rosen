@@ -653,3 +653,82 @@ struct TunnelProcessTests {
         #expect(TunnelProcesses.terminate([p.processIdentifier], grace: 1))
     }
 }
+
+@Suite("Portas em uso")
+struct ListeningPortsTests {
+    let lsof = """
+    p11267
+    cssh
+    n127.0.0.1:5433
+    n[::1]:5433
+    p949
+    crapportd
+    n*:61918
+    p4242
+    cCode Helper (Plugin)
+    n127.0.0.1:3000
+    nlixo
+    """
+
+    @Test func leAsPortasEmEscuta() {
+        let sockets = ListeningPorts.parseLsof(lsof)
+        #expect(sockets.count == 4)
+        #expect(sockets[0] == ListeningSocket(address: "127.0.0.1", port: 5433, pid: 11267, command: "ssh"))
+        #expect(sockets[1].address == "::1")
+        #expect(sockets[2].address == "*")
+        #expect(sockets[3].command == "Code Helper (Plugin)")
+        #expect(sockets[3].pid == 4242)
+    }
+
+    @Test func separaEnderecoEPorta() {
+        #expect(ListeningPorts.splitAddress("[fe80::1%lo0]:631")! == ("fe80::1", 631))
+        #expect(ListeningPorts.splitAddress("*:*") == nil)
+    }
+
+    @Test func juntaIPv4EIPv6DoMesmoProcesso() {
+        let entries = ListeningPorts.entries(from: ListeningPorts.parseLsof(lsof)) { pid in
+            (pid == 949 ? "/usr/libexec/rapportd" : nil, pid == 949 ? .system : .user)
+        }
+        #expect(entries.map(\.port) == [3000, 5433, 61918])
+        let ssh = entries[1]
+        #expect(ssh.addresses == ["127.0.0.1", "::1"])
+        #expect(!ssh.isExposed)
+        #expect(entries[2].isExposed)
+        #expect(entries[2].name == "rapportd")
+        #expect(entries[2].owner == .system)
+    }
+
+    @Test func juntaOsWorkersDoMesmoPrograma() {
+        let out = "p300\ncnginx\nn127.0.0.1:80\np301\ncnginx\nn127.0.0.1:80\np302\ncnginx\nn127.0.0.1:443\n"
+        let entries = ListeningPorts.entries(from: ListeningPorts.parseLsof(out)) { _ in ("/opt/nginx", .user) }
+        #expect(entries.count == 2)
+        #expect(entries[0].pids == [300, 301])
+        #expect(entries[0].pid == 300)
+        #expect(entries[1].port == 443)
+    }
+
+    @Test func achaOAppDoExecutavel() {
+        let e = PortEntry(port: 1, addresses: ["*"], pids: [1], name: "com.docker.backend",
+                          path: "/Applications/Docker.app/Contents/MacOS/com.docker.backend", owner: .user)
+        #expect(e.appBundlePath == "/Applications/Docker.app")
+    }
+
+    @Test func varreduraDeVerdade() {
+        // O próprio teste abre uma porta e precisa se encontrar como programa do usuário.
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        _ = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        listen(fd, 1)
+        var bound = sockaddr_in(); var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &bound) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+        let port = Int(UInt16(bigEndian: bound.sin_port))
+
+        let mine = ListeningPorts.scan().first { $0.port == port }
+        #expect(mine?.pid == getpid())
+        #expect(mine?.owner == .user)
+    }
+}
