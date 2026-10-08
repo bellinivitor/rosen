@@ -51,6 +51,8 @@ func run() {
 
     for dark in [false, true] {
         let suffix = dark ? "dark" : "light"
+        render(NavigationStack { PortsView() }.environment(store), size: CGSize(width: 720, height: 600), dark: dark,
+               to: out.appendingPathComponent("ports-\(suffix).png"))
         render(TunnelDetailView(tunnelID: a.id).environment(store), size: CGSize(width: 760, height: 980), dark: dark,
                to: out.appendingPathComponent("detail-\(suffix).png"))
         render(TunnelDetailView(tunnelID: b.id).environment(store), size: CGSize(width: 760, height: 560), dark: dark,

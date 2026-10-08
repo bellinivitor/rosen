@@ -16,6 +16,10 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button { openWindow(id: WindowID.ports) } label: {
+                    Label("Portas em uso", systemImage: "network")
+                }
+                .help("Ver que programa está usando cada porta (⇧⌘P)")
                 Button { openWindow(id: WindowID.credentials) } label: {
                     Label("Credenciais", systemImage: "key")
                 }

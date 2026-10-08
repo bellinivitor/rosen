@@ -27,6 +27,13 @@ struct RosenApp: App {
         }
         .defaultSize(width: 780, height: 520)
 
+        Window("Portas em uso", id: WindowID.ports) {
+            PortsView()
+                .environment(store)
+                .frame(minWidth: 560, minHeight: 400)
+        }
+        .defaultSize(width: 720, height: 560)
+
         MenuBarExtra {
             MenuBarView().environment(store)
         } label: {
@@ -43,6 +50,7 @@ struct RosenApp: App {
 enum WindowID {
     static let main = "main"
     static let credentials = "credentials"
+    static let ports = "ports"
 }
 
 @MainActor
@@ -184,6 +192,8 @@ struct RosenCommands: Commands {
             Button("Bloquear credenciais") { Unlocker.shared.lock() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
                 .disabled(!Unlocker.shared.isUnlocked)
+            Button("Portas em uso…") { openWindow(id: WindowID.ports) }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
             Divider()
             Button("Excluir…") { if let id = selected?.id { store.requestDelete(id) } else if let id = server?.id { store.requestDeleteServer(id) } }
                 .disabled(!hasSelection)
