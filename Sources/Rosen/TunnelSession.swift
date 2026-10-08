@@ -169,6 +169,9 @@ final class TunnelSession {
 
     func clearLogs() { logs.removeAll() }
 
+    /// Registra no log um aviso que veio de fora da sessão (ex.: conexão antiga substituída).
+    func note(_ text: String) { log(.warning, text) }
+
     // MARK: - Processo
 
     private func launch() {
@@ -226,6 +229,7 @@ final class TunnelSession {
             env["SSH_ASKPASS"] = askpassPath
             env["SSH_ASKPASS_REQUIRE"] = "force"
             env["DISPLAY"] = env["DISPLAY"] ?? ":0"
+            env[SSHCommand.tunnelMarker] = tunnelID.uuidString
             for (key, value) in b.environment { env[key] = value }
 
             let p = Process()

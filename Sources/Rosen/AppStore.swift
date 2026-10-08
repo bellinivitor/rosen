@@ -11,6 +11,14 @@ struct ServerEditorRequest: Identifiable {
     var isNew: Bool
 }
 
+/// Porta local de um túnel ocupada por outro processo, com o que dá para fazer a respeito.
+struct PortConflict: Equatable {
+    let port: Int
+    let occupant: PortOccupant
+    /// O processo é um `ssh` de túnel do Rosen (sobra de uma sessão anterior ou duplicado).
+    let isRosenTunnel: Bool
+}
+
 struct EditorRequest: Identifiable {
     let id = UUID()
     var tunnel: Tunnel
@@ -34,6 +42,8 @@ final class AppStore {
     /// Servidores com o terminal sendo aberto agora (Touch ID, preparação).
     private(set) var openingServers: Set<UUID> = []
     private(set) var loadState: LoadState = .loading
+    /// Por túnel: a porta local estava ocupada na última tentativa de conectar.
+    private(set) var portConflicts: [UUID: PortConflict] = [:]
 
     // Estado de UI compartilhado entre janela, menus e barra de menus.
     var selection: UUID?
@@ -66,7 +76,27 @@ final class AppStore {
         load()
         observeSystem()
         Notifier.requestAuthorization()
-        for t in tunnels where t.autoConnect { connect(t.id) }
+        reclaimOrphans { [weak self] reclaimed in
+            guard let self else { return }
+            for t in self.tunnels where t.autoConnect || reclaimed.contains(t.id) { self.connect(t.id) }
+        }
+    }
+
+    /// Encerra os `ssh` que sobraram de um Rosen que fechou sem encerrá-los (crash, Forçar Encerrar).
+    /// Devolve os túneis que estavam ligados, para serem reconectados pelo fluxo normal.
+    private func reclaimOrphans(then done: @escaping (Set<UUID>) -> Void) {
+        let orphans = TunnelProcesses.all().filter(\.isOrphan)
+        guard !orphans.isEmpty else { done([]); return }
+        let owners = orphans.compactMap { $0.tunnel(in: tunnels)?.id }
+        Task.detached(priority: .userInitiated) {
+            TunnelProcesses.terminate(orphans.map(\.pid))
+            await MainActor.run {
+                for id in owners {
+                    self.session(id)?.note("Havia uma conexão antiga deste túnel aberta desde antes de o Rosen fechar. Ela foi encerrada e o túnel reconectado.")
+                }
+                done(Set(owners))
+            }
+        }
     }
 
     func load() {
@@ -168,16 +198,59 @@ final class AppStore {
     }
 
     private func preflight(_ t: Tunnel) -> String? {
+        portConflicts[t.id] = nil
         if t.host.trimmingCharacters(in: .whitespaces).isEmpty { return "Defina o host do servidor." }
         if let id = t.credentialID, credential(id) == nil { return "A credencial deste túnel foi removida. Edite o túnel e escolha outra." }
         guard t.kind != .remote else { return nil }
         if let other = tunnels.first(where: { $0.conflicts(with: t) && sessions[$0.id]?.isOn == true }) {
             return "A porta \(t.listenPort) já está sendo usada pelo túnel “\(other.displayName)”."
         }
-        if let occupant = PortProbe.occupant(address: t.bindAddress, port: t.listenPort) {
-            return "A porta \(t.listenPort) já está em uso por \(occupant). Escolha outra porta local."
+        if let occupant = PortProbe.listener(address: t.bindAddress, port: t.listenPort) {
+            let process = occupant.pid.flatMap(TunnelProcesses.inspect)
+            let owner = process?.tunnel(in: tunnels)
+            portConflicts[t.id] = PortConflict(port: t.listenPort, occupant: occupant, isRosenTunnel: process != nil)
+            if let process {
+                let which = owner.map { $0.id == t.id ? "deste túnel" : "do túnel “\($0.displayName)”" } ?? "de um túnel apagado"
+                let origin = process.isOrphan ? "que ficou aberta depois que o Rosen fechou" : "aberta por outra cópia do Rosen"
+                return "A porta \(t.listenPort) está presa a uma conexão antiga \(which), \(origin)."
+            }
+            return "A porta \(t.listenPort) já está em uso por \(occupant.name). Escolha outra porta local."
         }
         return nil
+    }
+
+    func portConflict(for id: UUID) -> PortConflict? { portConflicts[id] }
+
+    /// Encerra quem ocupa a porta do túnel e conecta. Confere antes se é o mesmo processo.
+    func freePortAndConnect(_ id: UUID) {
+        guard let t = tunnel(id), let conflict = portConflicts[id], let pid = conflict.occupant.pid else { return }
+        portConflicts[id] = nil
+        let address = t.bindAddress, port = t.listenPort
+        Task.detached(priority: .userInitiated) {
+            // O processo pode ter mudado desde o aviso: só encerra se ainda for ele na porta.
+            let current = PortProbe.listener(address: address, port: port)
+            let freed = current?.pid == pid
+                ? TunnelProcesses.terminate([pid]) && !PortProbe.isBound(address: address, port: port)
+                : current == nil
+            await MainActor.run {
+                if freed {
+                    self.session(id)?.note("A porta \(port) foi liberada (\(conflict.occupant.name), PID \(pid), encerrado).")
+                } else {
+                    self.showToast("Não foi possível liberar a porta \(port).")
+                }
+                self.connect(id)
+            }
+        }
+    }
+
+    /// Troca a porta local por uma livre e conecta.
+    func useFreePortAndConnect(_ id: UUID) {
+        guard let index = tunnels.firstIndex(where: { $0.id == id }) else { return }
+        let port = suggestedListenPort(for: tunnels[index].listenPort, excluding: id)
+        portConflicts[id] = nil
+        tunnels[index].listenPort = port
+        session(id)?.note("Porta local trocada para \(port).")
+        connect(id)
     }
 
     private func handle(_ event: TunnelSession.Event, from session: TunnelSession) {

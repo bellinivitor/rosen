@@ -47,7 +47,11 @@ enum WindowID {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Fontes de sinal mantidas vivas enquanto o app roda.
+    private var signalSources: [DispatchSourceSignal] = []
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        handleTerminationSignals()
         DockIcon.observeWindows()
         AppStore.shared.bootstrap()
         // Se o app abrir sem janela (ex.: ao iniciar a sessão), fica só na barra de menus.
@@ -58,6 +62,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AppStore.shared.shutdown()
+    }
+
+    /// `kill`/`pkill` (e o `make run`) mandam SIGTERM, que por padrão derruba o app sem passar por
+    /// `applicationWillTerminate`, deixando os `ssh` vivos e as portas presas. Aqui o sinal vira um
+    /// encerramento normal. Crash e SIGKILL não têm como ser tratados: para eles há a limpeza ao abrir.
+    private func handleTerminationSignals() {
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { NSApp.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 }
 

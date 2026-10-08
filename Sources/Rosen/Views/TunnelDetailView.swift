@@ -4,6 +4,7 @@ import SwiftUI
 struct TunnelDetailView: View {
     @Environment(AppStore.self) private var store
     let tunnelID: UUID
+    @State private var confirmingKill: PortConflict?
 
     var body: some View {
         if let tunnel = store.tunnel(tunnelID), let session = store.session(tunnelID) {
@@ -35,6 +36,16 @@ struct TunnelDetailView: View {
                 }
             }
             .animation(.snappy, value: session.status)
+            .confirmationDialog(
+                "Encerrar \(confirmingKill?.occupant.name ?? "o processo")?",
+                isPresented: Binding(get: { confirmingKill != nil }, set: { if !$0 { confirmingKill = nil } }),
+                presenting: confirmingKill
+            ) { conflict in
+                Button("Encerrar e conectar", role: .destructive) { store.freePortAndConnect(tunnelID) }
+                Button("Cancelar", role: .cancel) {}
+            } message: { conflict in
+                Text("O \(conflict.occupant.name) (PID \(conflict.occupant.pid.map(String.init) ?? "?")) está usando a porta \(conflict.port). Ele será fechado e o que estiver aberto nele, perdido.")
+            }
         }
     }
 
@@ -42,12 +53,13 @@ struct TunnelDetailView: View {
     private func banner(_ tunnel: Tunnel, _ session: TunnelSession) -> some View {
         switch session.status {
         case .failed(let message):
-            BannerView(color: .red, icon: "exclamationmark.triangle.fill", title: "O túnel não conectou", message: message) {
-                Button("Editar túnel") { store.edit(tunnel.id) }
-                Button("Tentar de novo") { session.connect() }
-                    .keyboardShortcut(.defaultAction)
+            if let conflict = store.portConflict(for: tunnel.id) {
+                portBanner(tunnel, conflict, message)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            } else {
+                failureBanner(tunnel, session, message)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
-            .transition(.move(edge: .top).combined(with: .opacity))
         case .waiting(let retryAt, let attempt, let reason):
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let seconds = max(0, Int(retryAt.timeIntervalSince(context.date).rounded(.up)))
@@ -60,6 +72,35 @@ struct TunnelDetailView: View {
             .transition(.move(edge: .top).combined(with: .opacity))
         default:
             EmptyView()
+        }
+    }
+
+    private func failureBanner(_ tunnel: Tunnel, _ session: TunnelSession, _ message: String) -> some View {
+        BannerView(color: .red, icon: "exclamationmark.triangle.fill", title: "O túnel não conectou", message: message) {
+            Button("Editar túnel") { store.edit(tunnel.id) }
+            Button("Tentar de novo") { session.connect() }
+                .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    /// Porta local ocupada: oferece liberar (conexão antiga do Rosen) ou trocar de porta.
+    @ViewBuilder
+    private func portBanner(_ tunnel: Tunnel, _ conflict: PortConflict, _ message: String) -> some View {
+        if conflict.isRosenTunnel {
+            BannerView(color: .orange, icon: "exclamationmark.triangle.fill",
+                       title: "Porta \(conflict.port) presa a uma conexão antiga", message: message) {
+                Button("Encerrar a antiga e conectar") { store.freePortAndConnect(tunnel.id) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        } else {
+            BannerView(color: .red, icon: "exclamationmark.triangle.fill",
+                       title: "Porta \(conflict.port) ocupada", message: message) {
+                if conflict.occupant.pid != nil {
+                    Button("Encerrar \(conflict.occupant.name)…") { confirmingKill = conflict }
+                }
+                Button("Usar outra porta") { store.useFreePortAndConnect(tunnel.id) }
+                    .keyboardShortcut(.defaultAction)
+            }
         }
     }
 }
