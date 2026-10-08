@@ -7,7 +7,7 @@ debug:          ## Build debug
 	@Scripts/build.sh debug
 
 run: debug      ## Build debug e abre o app
-	@pkill -x Rosen 2>/dev/null || true
+	@Scripts/quit.sh
 	@open build/Rosen.app
 
 test:           ## Testes do núcleo (parser, cofre, ssh, FIFO)
@@ -17,7 +17,7 @@ release:        ## Zip universal + atualiza Casks/rosen.rb (make release V=0.2.0
 	@Scripts/release.sh $(V)
 
 install: app    ## Copia para /Applications
-	@pkill -x Rosen 2>/dev/null || true
+	@Scripts/quit.sh
 	@rm -rf /Applications/Rosen.app
 	@cp -R build/Rosen.app /Applications/
 	@echo "✓ /Applications/Rosen.app"
