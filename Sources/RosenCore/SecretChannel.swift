@@ -226,11 +226,22 @@ public final class AskpassBroker: @unchecked Sendable {
     }
 }
 
+public struct PortOccupant: Equatable, Sendable {
+    /// `nil` quando o processo é de outro usuário (o lsof não o enxerga).
+    public let pid: pid_t?
+    public let name: String
+}
+
 public enum PortProbe {
     /// Se a porta estiver ocupada, devolve o nome do processo que a usa (ou "outro programa").
     public static func occupant(address: String, port: Int) -> String? {
+        listener(address: address, port: port)?.name
+    }
+
+    /// Quem está escutando na porta, ou `nil` se ela estiver livre.
+    public static func listener(address: String, port: Int) -> PortOccupant? {
         guard isBound(address: address, port: port) else { return nil }
-        return processListening(on: port) ?? "outro programa"
+        return processListening(on: port) ?? PortOccupant(pid: nil, name: "outro programa")
     }
 
     public static func isFree(_ port: Int) -> Bool {
@@ -265,19 +276,26 @@ public enum PortProbe {
         return result != 0 && errno == EADDRINUSE
     }
 
-    static func processListening(on port: Int) -> String? {
+    static func processListening(on port: Int) -> PortOccupant? {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        task.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fc"]
+        task.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fpc"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
         do { try task.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
-        return String(decoding: data, as: UTF8.self)
-            .split(separator: "\n")
-            .first { $0.hasPrefix("c") }
-            .map { String($0.dropFirst()) }
+        return parseLsof(String(decoding: data, as: UTF8.self))
+    }
+
+    /// Primeiro processo da saída `lsof -Fpc` (linhas `p<pid>` e `c<comando>`).
+    static func parseLsof(_ output: String) -> PortOccupant? {
+        var pid: pid_t?
+        for line in output.split(separator: "\n") {
+            if line.hasPrefix("p") { pid = pid_t(line.dropFirst()) }
+            if line.hasPrefix("c") { return PortOccupant(pid: pid, name: String(line.dropFirst())) }
+        }
+        return nil
     }
 }

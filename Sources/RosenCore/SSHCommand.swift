@@ -10,6 +10,29 @@ public enum AuthMaterial: Equatable, Sendable {
 
 public enum SSHCommand {
     public static let executable = "/usr/bin/ssh"
+    /// Variável de ambiente que marca o `ssh` com o id do túnel, para reconhecê-lo depois
+    /// mesmo que o Rosen tenha fechado sem encerrá-lo.
+    public static let tunnelMarker = "ROSEN_TUNNEL_ID"
+
+    /// Opções que só o `ssh` de túnel do Rosen usa juntas. Reconhecem processos sem a marca.
+    static let tunnelSignature = ["ExitOnForwardFailure=yes", "NumberOfPasswordPrompts=3", "ControlPath=none"]
+
+    /// Os argumentos são de um túnel aberto pelo Rosen?
+    public static func isTunnelInvocation(_ args: [String]) -> Bool {
+        args.starts(with: ["-N", "-T", "-v"]) && tunnelSignature.allSatisfy(args.contains)
+    }
+
+    /// Os argumentos abrem exatamente este túnel (encaminhamento, porta e destino)?
+    public static func matches(_ args: [String], tunnel t: Tunnel) -> Bool {
+        guard isTunnelInvocation(args), args.last == t.destination else { return false }
+        let forward = [t.kind.flag, forwardSpec(for: t, omitLoopbackBind: t.kind == .remote)]
+        let port = ["-p", String(t.port)]
+        return contains(args, forward) && contains(args, port)
+    }
+
+    private static func contains(_ args: [String], _ pair: [String]) -> Bool {
+        zip(args, args.dropFirst()).contains { [$0, $1] == pair }
+    }
 
     /// Argumentos reais passados ao /usr/bin/ssh. Nunca contêm segredos.
     public static func arguments(for t: Tunnel, auth: AuthMaterial) -> [String] {

@@ -579,3 +579,77 @@ final class Locked<T>: @unchecked Sendable {
     var value: T { lock.lock(); defer { lock.unlock() }; return stored }
     func mutate(_ body: (inout T) -> Void) { lock.lock(); body(&stored); lock.unlock() }
 }
+
+@Suite("Processos de túnel")
+struct TunnelProcessTests {
+    /// Monta um bloco no formato de `KERN_PROCARGS2`.
+    func procArgs(_ argv: [String], env: [String]) -> [UInt8] {
+        var bytes: [UInt8] = withUnsafeBytes(of: Int32(argv.count).littleEndian, Array.init)
+        bytes += Array("/usr/bin/ssh".utf8) + [0, 0, 0, 0]
+        for s in argv + env { bytes += Array(s.utf8) + [0] }
+        return bytes + [0]
+    }
+
+    @Test func separaArgumentosEAmbiente() throws {
+        let id = UUID()
+        let bytes = procArgs(["ssh", "-N", "-L", "5433:db:5432", "ana@h"],
+                             env: ["PATH=/usr/bin", "\(SSHCommand.tunnelMarker)=\(id.uuidString)", "X=a=b"])
+        let parsed = try #require(ProcessTable.parseProcArgs(bytes))
+        #expect(parsed.arguments == ["-N", "-L", "5433:db:5432", "ana@h"])
+        #expect(parsed.environment[SSHCommand.tunnelMarker] == id.uuidString)
+        #expect(parsed.environment["X"] == "a=b")
+    }
+
+    @Test func blocoTruncadoNaoQuebra() {
+        #expect(ProcessTable.parseProcArgs([1, 0]) == nil)
+        let bytes = procArgs(["ssh", "-N"], env: [])
+        #expect(ProcessTable.parseProcArgs(Array(bytes.prefix(20))) == nil)
+    }
+
+    @Test func reconheceOComandoDoProprioTunel() {
+        let t = Tunnel(host: "178.128.68.190", user: "forge", listenPort: 5433, targetPort: 5432)
+        let args = SSHCommand.arguments(for: t, auth: .identityFile("/tmp/chave"))
+        #expect(SSHCommand.isTunnelInvocation(args))
+        #expect(SSHCommand.matches(args, tunnel: t))
+
+        var outraPorta = t; outraPorta.listenPort = 5434
+        #expect(!SSHCommand.matches(args, tunnel: outraPorta))
+        var outroHost = t; outroHost.host = "outro"
+        #expect(!SSHCommand.matches(args, tunnel: outroHost))
+    }
+
+    @Test func naoConfundeSessaoInterativaNemSshManual() {
+        let s = Server(host: "h", user: "u")
+        #expect(!SSHCommand.isTunnelInvocation(SSHCommand.interactiveArguments(for: s, auth: .system)))
+        #expect(!SSHCommand.isTunnelInvocation(["-N", "-L", "5433:127.0.0.1:5432", "u@h"]))
+    }
+
+    @Test func tunelPelaMarcaOuPeloComando() {
+        let a = Tunnel(host: "a", user: "u", listenPort: 5433)
+        let b = Tunnel(host: "b", user: "u", listenPort: 6380, targetPort: 6379)
+        let argsB = SSHCommand.arguments(for: b, auth: .system)
+
+        let marcado = TunnelProcess(pid: 10, parentPID: 1, tunnelID: a.id, arguments: argsB)
+        #expect(marcado.tunnel(in: [a, b])?.id == a.id) // a marca vence o comando
+        #expect(marcado.isOrphan)
+
+        let antigo = TunnelProcess(pid: 11, parentPID: 500, tunnelID: nil, arguments: argsB)
+        #expect(antigo.tunnel(in: [a, b])?.id == b.id)
+        #expect(!antigo.isOrphan)
+    }
+
+    @Test func leASaidaDoLsof() {
+        #expect(PortProbe.parseLsof("p34019\ncssh\n") == PortOccupant(pid: 34019, name: "ssh"))
+        #expect(PortProbe.parseLsof("cpostgres\n") == PortOccupant(pid: nil, name: "postgres"))
+        #expect(PortProbe.parseLsof("") == nil)
+    }
+
+    @Test func encerraProcessoDeVerdade() throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        p.arguments = ["30"]
+        try p.run()
+        #expect(TunnelProcesses.isAlive(p.processIdentifier))
+        #expect(TunnelProcesses.terminate([p.processIdentifier], grace: 1))
+    }
+}
