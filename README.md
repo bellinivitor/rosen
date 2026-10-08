@@ -79,6 +79,7 @@ Requer macOS 14 (Sonoma) ou mais recente. Funciona em Macs com Apple Silicon e I
 - **Quantos você quiser**: Local (`-L`), Remoto (`-R`) e proxy SOCKS (`-D`).
 - **Reconexão automática**, com espera crescente (1 s até 30 s). Reconecta quando a rede volta e quando o Mac acorda.
 - **Erros que dá para entender**: "a porta 5433 já está em uso por postgres", "autenticação recusada", "a identidade do servidor mudou".
+- **Porta ocupada com solução no próprio aviso**: se outro programa está na porta, o Rosen oferece trocar para uma porta livre ou encerrar o programa. Se o Rosen fechou de forma inesperada (crash, Forçar Encerrar) e deixou um `ssh` para trás, ele encerra essa conexão antiga ao abrir de novo e reconecta o túnel.
 - **Latência ao vivo**: com o túnel conectado, o Rosen mede o ping até o servidor a cada 5 s e mostra o valor e um mini gráfico. Usa ICMP, então não gera logs de login no servidor.
 - **Terminal embutido** em cada túnel: o comando `ssh` equivalente e a saída da conexão.
 
@@ -97,6 +98,17 @@ O Rosen guarda os servidores que você acessa por SSH e abre cada um numa aba no
 - **Latência** no detalhe do servidor, por ping.
 - **Túnel a partir de um servidor**, sem redigitar host, porta e credencial.
 
+### Portas em uso
+
+Em **Portas em uso** (o botão de rede no canto superior direito, ou `⇧⌘P`), o Rosen mostra que programa está usando cada porta do Mac: os seus túneis, os seus programas (Docker, Postgres, Herd…) e os serviços do macOS.
+
+- **Mapa das portas**: uma faixa de 1 a 65535 com cada porta ocupada. Passe o mouse para ver de quem é.
+- **Na rede**: um ponto laranja marca as portas que aceitam conexões de outros dispositivos, não só deste Mac.
+- **Conflitos**: avisa quando um programa está na mesma porta de um túnel cadastrado.
+- **Ações**: copiar o endereço, mostrar no Finder, encerrar o processo (com confirmação) ou desconectar o túnel.
+
+Sem permissão de administrador, o macOS não mostra quem está nas portas de serviços que rodam como root (como o `sshd`).
+
 ### Atalhos
 
 | Ação | Atalho |
@@ -110,6 +122,7 @@ O Rosen guarda os servidores que você acessa por SSH e abre cada um numa aba no
 | Conectar todos / desconectar todos | `⇧⌘R` / `⇧⌘.` |
 | Credenciais | `⇧⌘K` |
 | Bloquear credenciais | `⇧⌘L` |
+| Portas em uso | `⇧⌘P` |
 | Excluir | `⌫` na lista |
 
 ## Segurança
