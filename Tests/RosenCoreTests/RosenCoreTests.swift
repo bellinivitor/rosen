@@ -732,3 +732,34 @@ struct ListeningPortsTests {
         #expect(mine?.owner == .user)
     }
 }
+
+@Suite("PATH do ssh")
+struct UserPathTests {
+    @Test func poeOsDiretoriosDoHomebrewNaFrente() {
+        let path = UserPath.augmented("/usr/bin:/bin:/usr/sbin:/sbin")
+        #expect(path == "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin")
+    }
+
+    @Test func naoRepeteODiretorioQueJaEstavaNoPath() {
+        let path = UserPath.augmented("/usr/bin:/opt/homebrew/bin:/bin")
+        #expect(path == "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/bin")
+    }
+
+    @Test func semPathUsaOMinimoDoSistema() {
+        #expect(UserPath.augmented(nil).hasSuffix(UserPath.systemPath))
+        #expect(UserPath.augmented("").hasSuffix(UserPath.systemPath))
+    }
+
+    @Test func descartaDiretorioVazio() {
+        // Um "::" no PATH vale como o diretório atual, e não deve sobrar no resultado.
+        let path = UserPath.augmented("/usr/bin::/bin")
+        #expect(!path.contains("::"))
+        #expect(path.hasSuffix("/usr/bin:/bin"))
+    }
+
+    @Test func oProxyCommandDoCloudflaredEhEncontrado() {
+        // O caso do relato: o app acorda com o PATH do launchd e o ssh precisa do cloudflared.
+        let env = UserPath.augmented("/usr/bin:/bin:/usr/sbin:/sbin")
+        #expect(env.split(separator: ":").contains("/opt/homebrew/bin"))
+    }
+}

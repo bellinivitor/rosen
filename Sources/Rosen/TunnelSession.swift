@@ -226,6 +226,9 @@ final class TunnelSession {
             broker = b
 
             var env = ProcessInfo.processInfo.environment
+            // O app herda o PATH mínimo do launchd: sem isto um ProxyCommand do ~/.ssh/config
+            // (cloudflared, nc, um bastion) não é encontrado.
+            env["PATH"] = UserPath.augmented(env["PATH"])
             env["SSH_ASKPASS"] = askpassPath
             env["SSH_ASKPASS_REQUIRE"] = "force"
             env["DISPLAY"] = env["DISPLAY"] ?? ":0"
